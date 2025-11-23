@@ -8,6 +8,82 @@
 // @run-at       document-start
 // ==/UserScript==
 
+(function () {
+    'use strict';
+
+    // 想要的头像尺寸，自己改，比如 48 / 64 / 96 都行
+    const TARGET_GRAVATAR_SIZE = 64;
+
+    function upgradeAvatar(img) {
+        if (!img || !img.src) return;
+
+        let url;
+        try {
+            url = new URL(img.src, location.href);
+        } catch (e) {
+            // 忽略无效 URL
+            return;
+        }
+
+        const pathname = url.pathname;
+        const hostname = url.hostname;
+
+        // 1）处理 /avatar/ 路径且带 _normal 的图片
+        if (/\/avatar\//.test(pathname) && /_normal(\.\w+)$/.test(pathname)) {
+            url.pathname = pathname.replace(/_normal(\.\w+)$/, '_large$1');
+            img.src = url.toString();
+            return;
+        }
+
+        // 2）处理 V2EX 的 gravatar 头像：通过 s=xx 控制尺寸
+        //    例如：
+        //    https://cdn.v2ex.com/gravatar/xxxx?s=24&d=retro
+        //    -> 提升到 s=48（或 TARGET_GRAVATAR_SIZE）
+        if (hostname.endsWith('v2ex.com') && /\/gravatar\//.test(pathname)) {
+            const params = url.searchParams;
+            const s = params.get('s');
+
+            if (s) {
+                const curSize = parseInt(s, 10);
+                if (!Number.isNaN(curSize) && curSize < TARGET_GRAVATAR_SIZE) {
+                    params.set('s', String(TARGET_GRAVATAR_SIZE));
+                    // URLSearchParams 是实时绑定的，不用再手动赋值 url.search
+                    img.src = url.toString();
+                }
+            }
+        }
+    }
+
+    function scanAll() {
+        document.querySelectorAll('img.avatar').forEach(upgradeAvatar);
+    }
+
+    // 首次扫描
+    scanAll();
+
+    // 监听后续动态加载的头像（比如 PJAX / AJAX）
+    const observer = new MutationObserver(mutations => {
+        for (const m of mutations) {
+            for (const node of m.addedNodes) {
+                if (node.nodeType !== 1) continue; // 只处理元素节点
+                if (node.matches && node.matches('img.avatar')) {
+                    upgradeAvatar(node);
+                }
+                if (node.querySelectorAll) {
+                    node.querySelectorAll('img.avatar').forEach(upgradeAvatar);
+                }
+            }
+        }
+    });
+
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+    });
+})();
+
+
+
 "use strict";
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -634,7 +710,7 @@ function getStorage(useCache = true) {
         window.__V2P_StorageCache = data;
       }
       resolve(data);
-    }
+    } 
   });
 }
 function getStorageSync() {
@@ -734,7 +810,7 @@ var init_globals = __esm({
     $topicContentBox = $("#Main .box:has(.topic_buttons)");
     if ($topicContentBox.length === 0) {
       // 移动端 / 特殊布局兜底：不依赖 #Main
-      $topicContentBox = $(".box:has(.topic_buttons)");
+      $topicContentBox = $('.box:has(.topic_buttons)');
     }
     $topicHeader = $topicContentBox.find(".header");
 
@@ -1571,6 +1647,7 @@ var init_common = __esm({
               const remoteSyncInfo = settings?.["settings-sync" /* SyncInfo */];
               if (settings && remoteSyncInfo) {
                 if (syncInfo.version < remoteSyncInfo.version || neverChecked) {
+                
                 }
               }
             });
@@ -2231,6 +2308,7 @@ var init_dom = __esm({
   },
 });
 
+
 var invalidTemplate, topicDataCache;
 var init_use_topic_preview = __esm({
   "src/use-topic-preview.ts"() {
@@ -2269,6 +2347,7 @@ var init_use_topic_preview = __esm({
   },
 });
 
+
 var init_topic_list = __esm({
   "src/contents/home/topic-list.ts"() {
     "use strict";
@@ -2291,59 +2370,57 @@ var init_home = __esm({
     init_globals();
     init_helpers();
     init_topic_list();
-    function handleNodeNavToggle() {
-      // 1. 查找包含“节点导航”文本的标题区域
-      // 这里的筛选逻辑是为了确保只定位到正确的那个 box
-      const $headerSpan = $(".box .cell span.fade").filter((_, el) => {
-        return $(el).text().includes("节点导航");
-      });
+      function handleNodeNavToggle() {
+  // 1. 查找包含“节点导航”文本的标题区域
+  // 这里的筛选逻辑是为了确保只定位到正确的那个 box
+  const $headerSpan = $('.box .cell span.fade').filter((_, el) => {
+    return $(el).text().includes('节点导航');
+  });
 
-      if ($headerSpan.length === 0) return;
+  if ($headerSpan.length === 0) return;
 
-      // 2. 获取容器和需要折叠的内容
-      // 逻辑：找到父级 .box，然后选取除了第一个子元素（标题栏）以外的所有子元素
-      const $box = $headerSpan.closest(".box");
-      const $content = $box.children().not(":first-child");
+  // 2. 获取容器和需要折叠的内容
+  // 逻辑：找到父级 .box，然后选取除了第一个子元素（标题栏）以外的所有子元素
+  const $box = $headerSpan.closest('.box');
+  const $content = $box.children().not(':first-child');
 
-      // 3. 定义存储 Key
-      const STORAGE_KEY = "v2p_nav_collapsed";
+  // 3. 定义存储 Key
+  const STORAGE_KEY = 'v2p_nav_collapsed';
 
-      // 4. 创建切换按钮
-      // 使用 v2p-hover-btn 类以保持样式一致，行内样式微调位置
-      const $toggleBtn = $(
-        '<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; font-size: 12px; text-decoration: none;"></a>',
-      );
+  // 4. 创建切换按钮
+  // 使用 v2p-hover-btn 类以保持样式一致，行内样式微调位置
+  const $toggleBtn = $('<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; font-size: 12px; text-decoration: none;"></a>');
 
-      // 5. 定义切换状态的逻辑
-      const applyState = (isCollapsed) => {
-        if (isCollapsed) {
-          $content.hide();
-          $toggleBtn.text("[展开]");
-          // 稍微减小 box 的下边距，折叠后看起来更紧凑
-          $box.css("margin-bottom", "10px");
-        } else {
-          $content.show();
-          $toggleBtn.text("[收起]");
-          $box.css("margin-bottom", "");
-        }
-        // 存储状态：'1' 为折叠，'0' 为展开
-        localStorage.setItem(STORAGE_KEY, isCollapsed ? "1" : "0");
-      };
-
-      // 6. 绑定点击事件
-      $toggleBtn.on("click", function () {
-        const currentText = $(this).text();
-        const isNowCollapsed = currentText === "[收起]"; // 如果当前是[收起]，点击后就变成折叠
-        applyState(isNowCollapsed);
-      });
-
-      // 7. 初始化：读取存储的状态并应用
-      const savedState = localStorage.getItem(STORAGE_KEY) === "1";
-      applyState(savedState);
-
-      // 8. 将按钮插入到“节点导航”文字后面
-      $headerSpan.append($toggleBtn);
+  // 5. 定义切换状态的逻辑
+  const applyState = (isCollapsed) => {
+    if (isCollapsed) {
+      $content.hide();
+      $toggleBtn.text('[展开]');
+      // 稍微减小 box 的下边距，折叠后看起来更紧凑
+      $box.css('margin-bottom', '10px');
+    } else {
+      $content.show();
+      $toggleBtn.text('[收起]');
+      $box.css('margin-bottom', '');
     }
+    // 存储状态：'1' 为折叠，'0' 为展开
+    localStorage.setItem(STORAGE_KEY, isCollapsed ? '1' : '0');
+  };
+
+  // 6. 绑定点击事件
+  $toggleBtn.on('click', function() {
+    const currentText = $(this).text();
+    const isNowCollapsed = currentText === '[收起]'; // 如果当前是[收起]，点击后就变成折叠
+    applyState(isNowCollapsed);
+  });
+
+  // 7. 初始化：读取存储的状态并应用
+  const savedState = localStorage.getItem(STORAGE_KEY) === '1';
+  applyState(savedState);
+
+  // 8. 将按钮插入到“节点导航”文字后面
+  $headerSpan.append($toggleBtn);
+}
     void (async () => {
       const storage = await getStorage();
       const options = storage["options" /* Options */];
@@ -3810,7 +3887,7 @@ function processAvatar(params) {
       </div>
     `);
     popupControl2.$content.empty().append($content);
-
+    
     void (async () => {
       if (!memberDataCache.has(memberName)) {
         abortController = new AbortController();
@@ -3902,7 +3979,8 @@ var init_avatar = __esm({
 });
 
 // src/contents/topic/comment.ts
-function handleFilteredComments() {}
+function handleFilteredComments() {
+}
 function processActions($cellDom, data) {
   const $actions = $cellDom.find(
     "> table > tbody > tr > td:last-of-type > .fr",
@@ -3932,18 +4010,18 @@ function processActions($cellDom, data) {
     $thankIcon.addClass("v2p-hover-btn").replaceAll($thank);
     $controls.append($hide).append($thankIcon);
   }
-  const $reply = $actions.find("a:last-of-type");
-  // 删除原来的图标 / 文本
-  $reply.empty();
-  // 插入统一风格的按钮
-  $reply.append(
-    `<span class="v2p-control v2p-hover-btn v2p-control-reply">
+const $reply = $actions.find("a:last-of-type");
+// 删除原来的图标 / 文本
+$reply.empty();
+// 插入统一风格的按钮
+$reply.append(
+  `<span class="v2p-control v2p-hover-btn v2p-control-reply">
       <i data-lucide="message-square"></i>
    </span>`,
-  );
-  $controls.append($reply);
+);
+$controls.append($reply);
 
-  thankArea.remove();
+    thankArea.remove();
   const floorNum = $actions.find(".no").clone();
 
   $reply.on("click", () => {
@@ -4111,7 +4189,7 @@ async function handleComments() {
         }
       }
     });
-
+   
     updateCommentCells();
 
     $(".v2p-control-thank").on("click", (ev) => {
@@ -4237,6 +4315,7 @@ var init_comment = __esm({
   },
 });
 
+
 var $layoutToggle,
   iconLayoutV,
   iconLayoutH,
@@ -4255,6 +4334,7 @@ var init_layout = __esm({
     iconLayoutH = createElement$1(PanelRight);
     iconLayoutH.setAttribute("width", "100%");
     iconLayoutH.setAttribute("height", "100%");
+
   },
 });
 
@@ -4938,33 +5018,33 @@ runAfterLoaded(() => {
 
 // v2p: replace legacy heart/reply icons with SVG controls
 (function () {
-  "use strict";
+  'use strict';
 
   // 统一图标尺寸 & 描边粗细
-  const ICON_SIZE = 14; // 图标像素大小：18x18，你可以改成 16 / 20 等
-  const STROKE_WIDTH = 2; // 描边粗细
-  const ICON_OPACITY = 0.4; // 60% 不透明度
+  const ICON_SIZE = 14;        // 图标像素大小：18x18，你可以改成 16 / 20 等
+  const STROKE_WIDTH = 2;      // 描边粗细
+  const ICON_OPACITY = 0.4;    // 60% 不透明度
 
   function createSvgHeart() {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("xmlns", svgNS);
-    svg.setAttribute("width", ICON_SIZE);
-    svg.setAttribute("height", ICON_SIZE);
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", STROKE_WIDTH);
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("data-lucide", "heart");
-    svg.setAttribute("class", "lucide lucide-heart");
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('xmlns', svgNS);
+    svg.setAttribute('width', ICON_SIZE);
+    svg.setAttribute('height', ICON_SIZE);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', STROKE_WIDTH);
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('data-lucide', 'heart');
+    svg.setAttribute('class', 'lucide lucide-heart');
     svg.style.opacity = String(ICON_OPACITY);
 
-    const path = document.createElementNS(svgNS, "path");
+    const path = document.createElementNS(svgNS, 'path');
     path.setAttribute(
-      "d",
-      "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
+      'd',
+      'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z'
     );
     svg.appendChild(path);
 
@@ -4972,25 +5052,25 @@ runAfterLoaded(() => {
   }
 
   function createSvgReply() {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("xmlns", svgNS);
-    svg.setAttribute("width", ICON_SIZE);
-    svg.setAttribute("height", ICON_SIZE);
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", STROKE_WIDTH);
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("data-lucide", "message-square");
-    svg.setAttribute("class", "lucide lucide-message-square");
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('xmlns', svgNS);
+    svg.setAttribute('width', ICON_SIZE);
+    svg.setAttribute('height', ICON_SIZE);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', STROKE_WIDTH);
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('data-lucide', 'message-square');
+    svg.setAttribute('class', 'lucide lucide-message-square');
     svg.style.opacity = String(ICON_OPACITY);
 
-    const path = document.createElementNS(svgNS, "path");
+    const path = document.createElementNS(svgNS, 'path');
     path.setAttribute(
-      "d",
-      "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+      'd',
+      'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
     );
     svg.appendChild(path);
 
@@ -5001,46 +5081,46 @@ runAfterLoaded(() => {
     const doc = root || document;
 
     // 1. 替换感谢小红心 heart_neue.png
-    doc.querySelectorAll('img[src*="heart_neue.png"]').forEach((img) => {
-      const a = img.closest("a");
+    doc.querySelectorAll('img[src*="heart_neue.png"]').forEach(img => {
+      const a = img.closest('a');
       if (!a) return;
 
-      if (a.dataset.v2pSvgReplaced === "heart") return;
-      a.dataset.v2pSvgReplaced = "heart";
+      if (a.dataset.v2pSvgReplaced === 'heart') return;
+      a.dataset.v2pSvgReplaced = 'heart';
 
       const svg = createSvgHeart();
       // 如果需要，可以保持原来的 vertical-align
-      svg.style.verticalAlign = img.style.verticalAlign || "middle";
+      svg.style.verticalAlign = img.style.verticalAlign || 'middle';
 
       img.replaceWith(svg);
     });
 
     // 2. 替换回复图标 reply_neue.png
-    doc.querySelectorAll('img[src*="reply_neue.png"]').forEach((img) => {
-      const a = img.closest("a");
+    doc.querySelectorAll('img[src*="reply_neue.png"]').forEach(img => {
+      const a = img.closest('a');
       if (!a) return;
 
-      if (a.dataset.v2pSvgReplaced === "reply") return;
-      a.dataset.v2pSvgReplaced = "reply";
+      if (a.dataset.v2pSvgReplaced === 'reply') return;
+      a.dataset.v2pSvgReplaced = 'reply';
 
       const svg = createSvgReply();
-      svg.style.verticalAlign = img.style.verticalAlign || "middle";
+      svg.style.verticalAlign = img.style.verticalAlign || 'middle';
 
       img.replaceWith(svg);
     });
   }
 
   // 初次执行
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => replaceIcons());
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => replaceIcons());
   } else {
     replaceIcons();
   }
 
   // 监听后续插入
-  const observer = new MutationObserver((mutations) => {
+  const observer = new MutationObserver(mutations => {
     for (const m of mutations) {
-      m.addedNodes.forEach((node) => {
+      m.addedNodes.forEach(node => {
         if (node.nodeType === 1) {
           replaceIcons(node);
         }

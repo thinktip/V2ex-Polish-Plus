@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         V2eX - Polish Style
-// @version      3.1
+// @version      3.2
 // @description  V2ex Polish Style
 // @author       coolpace
 // @author       2smile
@@ -430,6 +430,10 @@ h1,
 font-family:ui-rounded, 'SF Pro Rounded', ui-system, -apple-system, sans-serif !important;
 }
 
+.topic_content a,
+.reply_content a {
+text-decoration: underline !important;
+}
 /* 标题和内容样式 */
 .item_title a {
 font-weight: normal !important;
@@ -446,6 +450,7 @@ img.avatar,
 .avatar {
 border-radius: 50% !important;
 width:40px !important;
+max-height:40px !important;
 }
 
 /* 节点和标签样式 */
@@ -2376,6 +2381,10 @@ body #Logo.v2p-logo {
 }
 .v2p-icon-heart svg {
     fill: var(--v2p-color-heart-fill);
+}
+
+.node {
+    border-radius:99px !important;
 }
 #Main .cell[id^="r"] .v2p-auto-hide {
     overflow: hidden;

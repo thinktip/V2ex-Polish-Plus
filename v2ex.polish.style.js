@@ -15,9 +15,7 @@
   const STORAGE_KEY = "user_preferred_theme_mode";
 
   // 1. 移动端检测（保持原样）
-  const isMobile =
-    /Mobi|Android|iPhone|iPad|iPod|Mobile|Phone/i.test(navigator.userAgent) ||
-    window.innerWidth <= 768;
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile|Phone/i.test(navigator.userAgent) || window.innerWidth <= 768;
   if (isMobile) {
     docEl.classList.add("v2p-mobile");
   }
@@ -27,7 +25,7 @@
 
   // 3. 【防闪烁核心】在页面渲染前，立即应用上次已知的深色设置
   // 这样如果你上次是深色，这次一打开就是深色，不会闪白
-  if (currentMode === "dark") {
+  if (currentMode === 'dark') {
     docEl.classList.add("v2p-theme-dark-default");
   }
 
@@ -35,25 +33,25 @@
   // 如果你点击了 V2EX 原生的“切换主题”按钮，页面会重载，V2EX 会在 #Wrapper 加一个 Night 类
   // 我们需要捕捉这个变化并更新脚本的记忆
   const observer = new MutationObserver((mutations, obs) => {
-    const wrapper = document.getElementById("Wrapper");
+    const wrapper = document.getElementById('Wrapper');
     if (wrapper) {
       // V2EX 原生深色模式的标志是 #Wrapper 拥有 .Night 类
-      const isNativeDark = wrapper.classList.contains("Night");
+      const isNativeDark = wrapper.classList.contains('Night');
       // 记录一份给后面的主题核心逻辑用
       window.__V2P_NATIVE_NIGHT__ = isNativeDark ? 1 : 0;
 
       if (isNativeDark) {
         // 如果原生是深色，但脚本记忆不是深色 -> 修正脚本为深色
-        if (currentMode !== "dark") {
+        if (currentMode !== 'dark') {
           docEl.classList.add("v2p-theme-dark-default");
-          localStorage.setItem(STORAGE_KEY, "dark");
+          localStorage.setItem(STORAGE_KEY, 'dark');
         }
       } else {
         // 如果原生是浅色，但脚本记忆是深色 -> 修正脚本为浅色
         // (注意：这里假设非 Night 就是浅色，如果你用晨光/水色等特殊主题，可保留不改)
-        if (currentMode === "dark") {
+        if (currentMode === 'dark') {
           docEl.classList.remove("v2p-theme-dark-default");
-          localStorage.setItem(STORAGE_KEY, "light"); // 或者 'auto'
+          localStorage.setItem(STORAGE_KEY, 'light'); // 或者 'auto'
         }
       }
       // 检测完成，断开观察，节省性能
@@ -63,6 +61,7 @@
 
   // 开始监听文档变化，等待 #Wrapper 出现
   observer.observe(document, { childList: true, subtree: true });
+
 })();
 (function () {
   "use strict";
@@ -190,6 +189,7 @@ html.v2p-theme-dark-default body #search-container #search-result {
     --button-foreground-hover-color: var(--v2p-color-button-foreground-hover);
     --button-border-color: var(--v2p-color-main-300);
     --button-border-hover-color: var(--v2p-color-main-400);
+    
     font-family: system-ui, sans-serif;
     color: var(--v2p-color-foreground);
     background-color: var(--v2p-color-background);
@@ -366,7 +366,7 @@ background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Pl
 }
 /* 深色模式下反转 Logo 颜色 */
 html.Night #Logo {
-filter: invert(1) brightness(1.2) contrast(1.1);
+filter: invert(1) brightness(0.9) contrast(0.9);
 }
 
 /* 布局和间距 */
@@ -442,6 +442,7 @@ line-height: 1.6;
 img.avatar,
 .avatar {
 border-radius: 50% !important;
+width:40px !important;
 }
 
 /* 节点和标签样式 */
@@ -475,7 +476,6 @@ width: auto;
 
 .ml {
 font-family: ui-monospace, 'SF Mono' !important;
-width: 600px;
 }
 .mll {
 border-radius: 10px;
@@ -671,6 +671,22 @@ body .button.super kbd {
     border: 1px solid var(--button-border-color);
     border-radius: 4px;
 }
+.button.normal {
+    border-radius:90px !important;
+    padding-left:20px !important;
+    padding-right:20px !important;
+}
+.ps_container td.button {
+    border-top-right-radius: 0px !important;
+    border-bottom-right-radius: 0px !important;
+}
+.ps_container td.normal_page_right {
+    border-top-right-radius: 90px !important;
+    border-bottom-right-radius: 90px !important;
+}
+
+
+
 body .button.special {
     --button-hover-shadow: 0 1.8px 0 var(--v2p-color-accent-200),
         0 1.8px 0 var(--v2p-color-accent-100);
@@ -907,10 +923,12 @@ body form[action^="/notes"] .cell {
 }
 body #syntax-selector .radio-group {
     padding: 3px;
+    border-radius:18px;
     background-color: var(--v2p-color-background);
 }
 body #syntax-selector .radio-group > input[type="radio"]:checked + label {
-    background-color: var(--v2p-color-accent-100);
+    background-color: #fff;
+    border-radius:18px;
 }
 body #syntax-selector .radio-group > input[type="radio"] + label {
     cursor: pointer;
@@ -935,9 +953,20 @@ body a.btn_hero {
 body a.btn_hero:hover {
     background-color: var(--v2p-color-foreground);
 }
+a.op {
+    border-radius:20px !important;
+    padding:2px 6px !important;
+    font-size:12px;
+}
+a.tab_current, a.tab {
+    border-radius:20px !important;
+    }
 a.tab:active, a.tab:link, a.tab:visited {
     color:var(--v2p-color-foreground);
 }
+#topic_thank {
+    line-height:1;
+    }
 body .cell_ops {
     background-color: rgba(0, 0, 0, 0);
 }
@@ -1355,6 +1384,9 @@ body .onoffswitch {
 #Main .box.node-header > .cell {
     margin: 0 -12px;
 }
+#Main .node-header {
+    padding-top:0 !important;
+}
 #Main .box .cell {
     padding: var(--v2p-tp-item-x) var(--v2p-tp-item-y);
     background-image: none !important;
@@ -1685,7 +1717,7 @@ a.topic-link:active,a.topic-link:link {
     line-height: 1.5;
 }
 #Main #reply-box .flex-one-row:last-of-type {
-
+    
     justify-content: flex-start;
 }
 #Main #reply-box .flex-one-row:last-of-type .gray {
@@ -1776,6 +1808,9 @@ a.topic-link:active,a.topic-link:link {
 }
 .box:has(a[href^="/advertise"]) .sidebar_compliance {
     background-color: var(--v2p-color-bg-block);
+}
+.inner table {
+table-layout: fixed;
 }
 /* --- 这里替换原文件中的深色模式 CSS --- */
 html.v2p-theme-dark-default,
@@ -1960,7 +1995,6 @@ html.v2p-theme-dark-default #search-container::before,
 
 .cell.item > table > tbody > tr > td:nth-child(2) {
     width: 10px !important;
-    min-width: 15px !important;
     max-width: 15px !important;
 }
 /* ==========================================================================
@@ -3056,6 +3090,7 @@ a.v2p-topic-preview-title-link:hover {
     resize: none;
     overflow: hidden;
     height: unset;
+    margin-bottom:10px;
     min-height: 140px !important;
     max-height: 800px !important;
     font-size: 15px;
@@ -3430,22 +3465,26 @@ a:link.v2p-topic-preview-retry {
     font-size: 16px !important;
 }
 
+.v2p-mobile form table td:first-child {
+    width: 100px !important;
+
+}
 
 
 /* 只把“内容那一格”变成 flex，不影响右边计数 */
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] {
+.v2p-mobile .cell.item td:nth-child(3) {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
 }
 
 /* 去掉两块空白行 */
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] > .sep5 {
+.v2p-mobile .cell.item td:nth-child(3) > .sep5 {
     display: none;
 }
 
 /* 主题标题：排第一行，占满整行 */
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] > .item_title {
+.v2p-mobile .cell.item td:nth-child(3) > .item_title {
     order: 1;
     width: 100%;
     display: block;
@@ -3453,16 +3492,16 @@ a:link.v2p-topic-preview-retry {
 }
 
 /* 第一行 small fade（节点 + 作者）→ 合并行左侧 */
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] > span.small.fade:first-of-type {
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:first-of-type {
     order: 2;
     display: inline;
     margin-top:8px;
 }
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] > span.small.fade:last-of-type {
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:last-of-type {
     display: none !important;
 }
 /* 第二个 small fade（时间 + 最后回复）→ 合并行右侧 */
-.v2p-mobile .cell.item td[width="auto"][valign="middle"] > span.small.fade:last-of-type {
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:last-of-type {
     order: 3;
     display: inline;
     margin-left: .5em;
@@ -3488,10 +3527,13 @@ a:link.v2p-topic-preview-retry {
     padding:5px 8px !important;
 }
 .v2p-mobile .cell.item table tr > td:last-child {
-    width: 40px !important;
-    max-width: 30px !important;
+
     min-width: 30px !important;
     vertical-align: top !important;
+}
+
+.v2p-mobile .cell.item table tr > td[width="70"] {
+    width:35px !important;
 }
 .v2p-mobile .item_title {
 font-size:15px;
@@ -3516,8 +3558,8 @@ width:50%;
 align:center;
 }
 .v2p-mobile .avatar {
-    width: 24px !important;
-    max-height: 24px !important;
+    width: 30px !important;
+    max-height: 30px !important;
     border-radius: 50%;
     object-fit: cover;
     overflow: hidden;
@@ -3625,6 +3667,12 @@ align:center;
 .v2p-mobile .header > .sep {
     display: none;
 }
+.v2p-mobile .cell > table > tbody > tr > td:first-child {
+width:30px !important;
+}
+.v2p-mobile #notifications .cell > table > tbody > tr > td:nth-child(2) {
+    padding-left:10px !important;
+}
 .v2p-mobile .v2p-indent {
     background-color: var(--bg-reply);
     border-left: 2px solid var(--v2p-color-border-darker);
@@ -3665,7 +3713,7 @@ html.Night #site-header-logo #LogoMobile {
     (document.head || document.documentElement).appendChild(el);
   }
 
-  // ========= 2. 主题模式 & 类名处理 =========
+    // ========= 2. 主题模式 & 类名处理 =========
   // 依次：亮色 → 晨光 → 水色 → 暗色 → 跟随系统
   const THEME_MODES = ["light", "dawn", "aqua", "dark", "auto"];
 
@@ -3679,14 +3727,11 @@ html.Night #site-header-logo #LogoMobile {
   // 1) 优先用第一个 IIFE 写入的 window.__V2P_NATIVE_NIGHT__
   // 2) 其次看 <link> 里是 tomorrow.css 还是 tomorrow-night.css
   // 3) 再不行就扫一遍 <script> 里的 SITE_NIGHT
-  function detectNativeNight() {
+    function detectNativeNight() {
     if (nativeNight !== null) return nativeNight;
 
     // 0. 如果前面的 MutationObserver 已经写好了，就直接用
-    if (
-      typeof window !== "undefined" &&
-      typeof window.__V2P_NATIVE_NIGHT__ === "number"
-    ) {
+    if (typeof window !== "undefined" && typeof window.__V2P_NATIVE_NIGHT__ === "number") {
       nativeNight = window.__V2P_NATIVE_NIGHT__;
       return nativeNight;
     }
@@ -3769,7 +3814,8 @@ html.Night #site-header-logo #LogoMobile {
     return nativeNight;
   }
 
-  // 根据 isDark 同步：
+
+    // 根据 isDark 同步：
   // 1) 请求原始的 night toggle URL，修改服务端 SITE_NIGHT
   // 2) 尽量把当前页面的 tomorrow*.css 也切到对应版本，避免代码高亮闪屏
   // 3) 同步移动端菜单里的图标
@@ -3811,10 +3857,7 @@ html.Night #site-header-logo #LogoMobile {
           const href = link.getAttribute("href") || "";
           if (target === 1) {
             // 切到 tomorrow-night.css
-            if (
-              href.includes("tomorrow.css") &&
-              !href.includes("tomorrow-night.css")
-            ) {
+            if (href.includes("tomorrow.css") && !href.includes("tomorrow-night.css")) {
               link.href = href.replace("tomorrow.css", "tomorrow-night.css");
             }
           } else {
@@ -3851,6 +3894,7 @@ html.Night #site-header-logo #LogoMobile {
     }
   }
 
+
   // 缓存当前主题模式，减少对 localStorage 的访问
   let currentMode = null;
 
@@ -3873,6 +3917,8 @@ html.Night #site-header-logo #LogoMobile {
     } catch (e) {}
     return currentMode;
   }
+
+
 
   function isSystemDark() {
     try {
@@ -4080,6 +4126,7 @@ html.Night #site-header-logo #LogoMobile {
           const dark = ensureThemeOnBothElements("auto");
           updateToggleButtons("auto", dark);
           syncNativeNight(dark);
+
         }
       });
     }

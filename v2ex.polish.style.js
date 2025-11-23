@@ -2,6 +2,9 @@
 // @name         V2eX - Polish Style
 // @version      3.1
 // @description  V2ex Polish Style
+// @author       coolpace
+// @author       2smile
+// @author       ChatGPT
 // @match        https://*.v2ex.com/*
 // @match        https://v2ex.com/*
 // @icon         https://v2ex.com/static/apple-touch-icon-180.png

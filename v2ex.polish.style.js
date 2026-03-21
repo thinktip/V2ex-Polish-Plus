@@ -1,74 +1,384 @@
 // ==UserScript==
-// @name         V2eX - Polish Style
+// @name         V2EX Plus - style
+// @namespace    https://v2ex.com/
 // @version      3.5
-// @description  V2ex Polish Style
-// @author       coolpace
-// @author       2smile
-// @author       ChatGPT
-// @match        https://*.v2ex.com/*
+// @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
-// @icon         https://v2ex.com/static/apple-touch-icon-180.png
+// @match        https://*.v2ex.com/*
 // @run-at       document-start
-// @grant        GM_addStyle
+// @icon         https://v2ex.com/static/apple-touch-icon-180.png
+// @grant        none
 // ==/UserScript==
+
+// GM_addStyle Polyfill for Chrome Extension
+if (typeof GM_addStyle === "undefined") {
+    window.GM_addStyle = function (css) {
+        const style = document.createElement("style");
+        style.type = "text/css";
+        style.textContent = css;
+        document.head
+            ? document.head.appendChild(style)
+            : document.documentElement.appendChild(style);
+        return style;
+    };
+}
 
 // 尽早执行：防闪烁 + 自动同步原生主题
 (function () {
-  const docEl = document.documentElement;
-  const STORAGE_KEY = "user_preferred_theme_mode";
+    const docEl = document.documentElement;
+    const STORAGE_KEY = "user_preferred_theme_mode";
 
-  // 1. 移动端检测（保持原样）
-  const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile|Phone/i.test(navigator.userAgent) || window.innerWidth <= 768;
-  if (isMobile) {
-    docEl.classList.add("v2p-mobile");
-  }
+    // [Note] 初始全屏隐藏已由 critical.css 处理
 
-  // 2. 读取用户上次的设置
-  let currentMode = localStorage.getItem(STORAGE_KEY);
-
-  // 3. 【防闪烁核心】在页面渲染前，立即应用上次已知的深色设置
-  // 这样如果你上次是深色，这次一打开就是深色，不会闪白
-  if (currentMode === 'dark') {
-    docEl.classList.add("v2p-theme-dark-default");
-  }
-
-  // 4. 【自动同步原生】建立一个观察者，当 V2EX 原生 DOM 加载出来后进行核对
-  // 如果你点击了 V2EX 原生的“切换主题”按钮，页面会重载，V2EX 会在 #Wrapper 加一个 Night 类
-  // 我们需要捕捉这个变化并更新脚本的记忆
-  const observer = new MutationObserver((mutations, obs) => {
-    const wrapper = document.getElementById('Wrapper');
-    if (wrapper) {
-      // V2EX 原生深色模式的标志是 #Wrapper 拥有 .Night 类
-      const isNativeDark = wrapper.classList.contains('Night');
-      // 记录一份给后面的主题核心逻辑用
-      window.__V2P_NATIVE_NIGHT__ = isNativeDark ? 1 : 0;
-
-      if (isNativeDark) {
-        // 如果原生是深色，但脚本记忆不是深色 -> 修正脚本为深色
-        if (currentMode !== 'dark') {
-          docEl.classList.add("v2p-theme-dark-default");
-          localStorage.setItem(STORAGE_KEY, 'dark');
-        }
-      } else {
-        // 如果原生是浅色，但脚本记忆是深色 -> 修正脚本为浅色
-        // (注意：这里假设非 Night 就是浅色，如果你用晨光/水色等特殊主题，可保留不改)
-        if (currentMode === 'dark') {
-          docEl.classList.remove("v2p-theme-dark-default");
-          localStorage.setItem(STORAGE_KEY, 'light'); // 或者 'auto'
-        }
-      }
-      // 检测完成，断开观察，节省性能
-      obs.disconnect();
+    // 1. 移动端检测（保持原样）
+    const isMobile =
+        /Mobi|Android|iPhone|iPad|iPod|Mobile|Phone/i.test(navigator.userAgent) ||
+        window.innerWidth <= 768;
+    if (isMobile) {
+        docEl.classList.add("v2p-mobile");
     }
-  });
 
-  // 开始监听文档变化，等待 #Wrapper 出现
-  observer.observe(document, { childList: true, subtree: true });
+    // 2. 读取用户上次的设置
+    let currentMode = localStorage.getItem(STORAGE_KEY);
 
+    // [Fast Path] 1. 立即注入主题类 & 关键 CSS (背景色 + 隐藏 body)
+    // 统一各主题背景色
+    const THEME_BG_MAP = {
+        light: "#f2f3f5",
+        dark: "#1c2128",
+        dawn: "#faf4ed",
+        aqua: "#f2f7fa",
+    };
+
+    let effectiveMode = currentMode;
+    if (currentMode === "auto" || !currentMode) {
+        effectiveMode =
+            window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+    }
+
+    const initBg = THEME_BG_MAP[effectiveMode] || THEME_BG_MAP.light;
+
+    // 立即应用类名，防止 Logo 等元素闪烁
+    if (effectiveMode === "dark") {
+        docEl.classList.add("v2p-theme-dark-default");
+    } else if (effectiveMode === "dawn") {
+        docEl.classList.add("v2p-theme-dawn");
+    } else if (effectiveMode === "aqua") {
+        docEl.classList.add("v2p-theme-aqua");
+    } else {
+        docEl.classList.add("v2p-theme-light-default");
+    }
+
+    // 设置初始背景色 & 隐藏 html
+    docEl.style.backgroundColor = initBg;
+    // docEl.style.visibility = "hidden"; // 已由 v2p-anti-flash 处理
+
+    /**
+     * 即时同步 theme-color
+     */
+    const getModeFromClass = () => {
+        if (docEl.classList.contains("v2p-theme-dark-default")) return "dark";
+        if (docEl.classList.contains("v2p-theme-dawn")) return "dawn";
+        if (docEl.classList.contains("v2p-theme-aqua")) return "aqua";
+        if (docEl.classList.contains("v2p-theme-light-default")) return "light";
+        return effectiveMode || "light";
+    };
+
+    const getResolvedMode = () => {
+        let mode = localStorage.getItem(STORAGE_KEY) || "auto";
+        if (mode === "auto") {
+            mode =
+                window.matchMedia &&
+                    window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+        }
+        return mode;
+    };
+
+    const getThemeColor = () => {
+        const mode = getModeFromClass() || getResolvedMode();
+        return THEME_BG_MAP[mode] || THEME_BG_MAP.light;
+    };
+
+    const THEME_META_ID = "v2p-theme-color";
+    let syncingThemeMeta = false;
+    const ensureThemeMeta = () => {
+        // 只移除非本插件的 theme-color，避免触发反复重建
+        document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+            if (m.id !== THEME_META_ID) m.remove();
+        });
+        let meta = document.getElementById(THEME_META_ID);
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.id = THEME_META_ID;
+            meta.name = "theme-color";
+            document.head ? document.head.appendChild(meta) : docEl.appendChild(meta);
+        }
+        return meta;
+    };
+
+    const syncThemeColor = (color) => {
+        if (syncingThemeMeta) return;
+        syncingThemeMeta = true;
+        const meta = ensureThemeMeta();
+        meta.content = color;
+        syncingThemeMeta = false;
+    };
+
+    // 初始同步
+    syncThemeColor(initBg);
+
+    // 持续监听：拦截原生 V2EX 对 theme-color 的可能修改
+    const metaObserver = new MutationObserver(() => {
+        if (syncingThemeMeta) return;
+        const color = getThemeColor();
+        const meta = ensureThemeMeta();
+        if (meta.content !== color) meta.content = color;
+    });
+    const forceThemeColor = () => {
+        syncThemeColor(getThemeColor());
+    };
+
+    // 当主题类发生变化时，主动同步一次
+    const classObserver = new MutationObserver(() => {
+        syncThemeColor(getThemeColor());
+    });
+    classObserver.observe(docEl, {
+        attributes: true,
+        attributeFilter: ["class"],
+    });
+
+    // 监听系统主题变化（auto 模式）
+    if (window.matchMedia) {
+        const mq = window.matchMedia("(prefers-color-scheme: dark)");
+        const onMqChange = () => syncThemeColor(getThemeColor());
+        if (mq.addEventListener) {
+            mq.addEventListener("change", onMqChange);
+        } else if (mq.addListener) {
+            mq.addListener(onMqChange);
+        }
+    }
+
+    // 等待 head 出现后开始监听
+    let currentHead = null;
+    const waitForHead = () => {
+        if (document.head) {
+            if (currentHead !== document.head) {
+                currentHead = document.head;
+            }
+            metaObserver.observe(document.head, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["content"],
+            });
+        } else {
+            requestAnimationFrame(waitForHead);
+        }
+    };
+    waitForHead();
+
+    // 监听 head 变更（某些导航会重建 head）
+    const headSwapObserver = new MutationObserver(() => {
+        if (document.head && document.head !== currentHead) {
+            currentHead = document.head;
+            metaObserver.observe(document.head, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["content"],
+            });
+            forceThemeColor();
+        }
+    });
+    headSwapObserver.observe(docEl, { childList: true, subtree: true });
+
+    // 加载后短时间强制同步，避免地址栏随机回退
+    const burstSync = () => {
+        let count = 0;
+        const id = setInterval(() => {
+            forceThemeColor();
+            count += 1;
+            if (count >= 15) clearInterval(id);
+        }, 200);
+    };
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", burstSync);
+    } else {
+        burstSync();
+    }
+    window.addEventListener("pageshow", burstSync);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") burstSync();
+    });
+
+    // 2. 注入 Loading 遮罩的样式（虽然 html hidden，但 loader 我们可以设为 visible）
+    const loaderStyle = document.createElement("style");
+    loaderStyle.innerHTML = `
+        #v2p-loading-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: ${initBg};
+            z-index: 2147483647;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            visibility: visible !important; /* 强制覆盖父级的 hidden */
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        .v2p-spinner {
+            width: 32px; height: 32px;
+            border: 3px solid ${effectiveMode === "dark" ? "#374151" : "#e5e7eb"};
+            border-top-color: ${effectiveMode === "dark" ? "#adbac7" : "#64748b"};
+            border-radius: 50%;
+            animation: v2p-spin 0.8s linear infinite;
+        }
+        @keyframes v2p-spin { to { transform: rotate(360deg); } }
+    `;
+    docEl.appendChild(loaderStyle);
+
+    // [Fast Path] 2. 注入 Loading 元素
+    const loader = document.createElement("div");
+    loader.id = "v2p-loading-overlay";
+    loader.innerHTML = '<div class="v2p-spinner"></div>';
+    document.documentElement.appendChild(loader);
+
+    // Remove loader when the page is stable
+    const removeLoader = () => {
+        if (loader) loader.remove();
+        if (loaderStyle) loaderStyle.remove();
+
+        // 恢复页面显示：移除所有防闪烁样式并添加加载完成类
+        const antiFlashStyles = document.querySelectorAll("#v2p-anti-flash");
+        antiFlashStyles.forEach((s) => s.remove());
+
+        docEl.classList.add("v2p-loaded");
+        docEl.style.visibility = "visible";
+    };
+
+    // Safety timeout: remove after 2s max just in case
+    setTimeout(removeLoader, 2000);
+
+    // Save for later removal in main execution
+    window.__V2P_REMOVE_LOADER__ = removeLoader;
+
+    // 4. 【插件完全控制主题】建立观察者，阻止 V2EX 原生主题干扰插件设置
+    // 不再自动同步原生主题到插件，而是让插件完全控制主题
+    const observer = new MutationObserver((mutations, obs) => {
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            // 记录原生状态供参考，但不再自动修改用户设置
+            const isNativeDark = wrapper.classList.contains("Night");
+            window.__V2P_NATIVE_NIGHT__ = isNativeDark ? 1 : 0;
+
+            // 插件完全控制主题：根据用户设置来决定是否添加/移除 Night 类
+            // 而不是让原生覆盖插件设置
+            if (currentMode === "dark") {
+                wrapper.classList.add("Night");
+                docEl.classList.add("Night");
+            } else {
+                wrapper.classList.remove("Night");
+                docEl.classList.remove("Night");
+            }
+
+            // 检测完成，断开观察，节省性能
+            obs.disconnect();
+        }
+    });
+
+    // 开始监听文档变化，等待 #Wrapper 出现
+    observer.observe(document, { childList: true, subtree: true });
+
+    // 5. 【拦截原生主题注入】阻止 V2EX 动态注入 SITE_NIGHT script 和 tomorrow-night.css
+    const themeInterceptor = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+                // 拦截包含 SITE_NIGHT 的 script
+                if (node.tagName === "SCRIPT" && node.textContent) {
+                    if (node.textContent.includes("SITE_NIGHT")) {
+                        // 根据插件设置决定是否需要修改
+                        const wantDark = currentMode === "dark";
+                        if (wantDark && node.textContent.includes("SITE_NIGHT = 0")) {
+                            // 用户想要深色但原生注入浅色，移除这个 script
+                            node.remove();
+                        } else if (
+                            !wantDark &&
+                            node.textContent.includes("SITE_NIGHT = 1")
+                        ) {
+                            // 用户想要浅色但原生注入深色，移除这个 script
+                            node.remove();
+                        }
+                    }
+                }
+
+                // 拦截 tomorrow-night.css 或 tomorrow.css 的 link
+                if (node.tagName === "LINK" && node.rel === "stylesheet") {
+                    const href = node.href || "";
+                    const wantDark = currentMode === "dark";
+
+                    if (!wantDark && href.includes("tomorrow-night.css")) {
+                        // 用户想要浅色但注入了深色高亮 CSS，替换为浅色版本
+                        node.href = href.replace("tomorrow-night.css", "tomorrow.css");
+                    } else if (
+                        wantDark &&
+                        href.includes("tomorrow.css") &&
+                        !href.includes("tomorrow-night.css")
+                    ) {
+                        // 用户想要深色但注入了浅色高亮 CSS，替换为深色版本
+                        node.href = href.replace("tomorrow.css", "tomorrow-night.css");
+                    }
+                }
+            }
+        }
+    });
+
+    // 监听 head 和 body 的变化
+    const startThemeInterceptor = () => {
+        if (document.head) {
+            themeInterceptor.observe(document.head, {
+                childList: true,
+                subtree: true,
+            });
+        }
+        if (document.body) {
+            themeInterceptor.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+        } else {
+            // body 还没出现，等待后再监听
+            const bodyWatcher = new MutationObserver(() => {
+                if (document.body) {
+                    themeInterceptor.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                    });
+                    bodyWatcher.disconnect();
+                }
+            });
+            bodyWatcher.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+            });
+        }
+    };
+
+    if (document.head) {
+        startThemeInterceptor();
+    } else {
+        requestAnimationFrame(startThemeInterceptor);
+    }
 })();
 (function () {
-  "use strict";
-  var style = `
+    "use strict";
+    var style = `
 :root {
     --zidx-serach: 100;
     --zidx-tabs: 10;
@@ -85,8 +395,8 @@
     --v2p-layout-column-gap: 25px;
     --v2p-layout-row-gap: 20px;
     --v2p-nav-height: 55px;
-    --v2p-tp-item-x: 12px;
-    --v2p-tp-item-y: 8px;
+    --v2p-tp-item-x: 18px;
+    --v2p-tp-item-y: 18px;
     --v2p-tp-tabs-pd: 10px;
     --v2p-tp-nested-pd: 10px 5px 2px 10px;
     --v2p-tp-preview-pd: 20px;
@@ -139,6 +449,7 @@ html.v2p-theme-dark-default body #search-container #search-result {
     --v2p-color-button-background-hover: var(--v2p-color-main-200);
     --v2p-color-button-foreground-hover: var(--v2p-color-main-600);
     --v2p-color-bg-content: #fff;
+    --v2p-color-bg-content-rgb: 255, 255, 255;
     --v2p-color-bg-footer: var(--v2p-color-bg-content);
     --v2p-color-bg-hover-btn: rgb(226 232 240 / 70%);
     --v2p-color-bg-subtle: #f7f7f7;
@@ -192,7 +503,7 @@ html.v2p-theme-dark-default body #search-container #search-result {
     --button-foreground-hover-color: var(--v2p-color-button-foreground-hover);
     --button-border-color: var(--v2p-color-main-300);
     --button-border-hover-color: var(--v2p-color-main-400);
-    
+
     font-family: system-ui, sans-serif;
     color: var(--v2p-color-foreground);
     background-color: var(--v2p-color-background);
@@ -232,6 +543,7 @@ html.v2p-theme-dark-default body #search-container #search-result {
     --v2p-color-button-background-hover: var(--v2p-color-main-200);
     --v2p-color-button-foreground-hover: var(--v2p-color-main-600);
     --v2p-color-bg-content: #fff;
+    --v2p-color-bg-content-rgb: 255, 255, 255;
     --v2p-color-bg-footer: var(--v2p-color-bg-content);
     --v2p-color-bg-hover-btn: rgb(226 232 240 / 70%);
     --v2p-color-bg-subtle: #f7f7f7;
@@ -288,7 +600,7 @@ html.v2p-theme-dark-default body #search-container #search-result {
     --button-border-hover-color: var(--v2p-color-main-400);
 }
 :root body #Logo {
-    background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex%402x.svg");
+    background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+") !important;
     width:130px !important;
     background-size: 130px 30px !important;
 }
@@ -309,10 +621,13 @@ html.v2p-theme-dark-default body #search-container #search-result {
 body {
     scrollbar-gutter: stable;
     overflow: overlay;
-    visibility: hidden;
+    /* visibility: hidden; */ /* 由即时执行块控制 */
 }
-body.v2p-theme-light-default {
-    visibility: visible;
+body.v2p-theme-light-default,
+body.v2p-theme-dark-default,
+body.v2p-theme-dawn,
+body.v2p-theme-aqua {
+    /* visibility: visible; */ /* 统一由脚本控制 */
 }
 body h1 {
     font-weight: bold;
@@ -359,13 +674,13 @@ body #Wrapper .content {
 /* Logo样式 */
 :root body #Logo,
 #LogoMobile {
-background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex%402x.svg") !important;
+background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+") !important;
 width: 130px !important;
 background-size: 130px 30px !important;
 }
 
 #LogoMobile {
-background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex%402x.svg") !important;
+background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+");
 }
 /* 深色模式下反转 Logo 颜色 */
 html.Night #Logo {
@@ -447,10 +762,16 @@ line-height: 1.6;
 
 /* 头像圆角 */
 img.avatar,
-.avatar {
+.avatar,
+.cell[class*="hot_t_"] img[alt] {
 border-radius: 50% !important;
 width:40px !important;
 max-height:40px !important;
+}
+/* 热门主题小头像单独设置尺寸 */
+.cell[class*="hot_t_"] img[alt] {
+width: 24px !important;
+max-height: 24px !important;
 }
 
 /* 节点和标签样式 */
@@ -475,6 +796,14 @@ max-width: 1200px !important;
 }
 #Top>.content {
 max-width: 1110px !important;
+}
+
+/* 隐藏将被替换的旧图标，防止闪烁 */
+img[src*="compose.png"],
+img[src*="reply_neue.png"],
+img[src*="unheart.png"],
+img[src*="heart.png"] {
+    display: none !important;
 }
 
 /* 成员活动条 */
@@ -515,12 +844,12 @@ body #Wrapper:has(#Singleton) {
     padding: 20px 0 0;
 }
 .subtle {
-    background-color:var(--v2p-color-bg-subtle);
+    background-color: var(--bg-reply, var(--v2p-color-bg-reply)) !important;
     border-radius:10px;
-    border:none;
+    border: none !important;
+    border-left: 2px solid var(--v2p-color-border-darker) !important;
     margin-top:10px;
     padding:10px;
-
 }
 #topic-tip-box {
     box-shadow: none !important;
@@ -613,6 +942,7 @@ body .button.super {
     display: inline-flex;
     gap: 5px;
     align-items: center;
+    justify-content: center;
     height: 28px;
     padding: 0 12px;
     font-family: inherit;
@@ -654,6 +984,18 @@ body .button.super:is(.hover_now, .disable_now) {
     box-shadow:
         0 1.8px 0 var(--box-background-hover-color) !important,
         0 1.8px 0 var(--button-background-color) !important;
+}
+/* 标准提交按钮：使用主题强调色 */
+body .button.normal.button {
+    background: var(--v2p-color-accent-500);
+    color: #fff;
+    height: 32px;
+    padding: 0 14px;
+    box-shadow: 0 1.8px 0 rgba(0, 0, 0, 0.08);
+}
+body .button.normal.button:is(:hover:enabled, :active:enabled) {
+    background: var(--v2p-color-accent-600);
+    color: #fff;
 }
 body .button.normal:is(.disable_now, :disabled),
 body .button.super:is(.disable_now, :disabled) {
@@ -767,26 +1109,63 @@ body .outdated {
     border-color: var(--v2p-color-border);
     border-bottom: none;
 }
-body:is(.page_normal, .page_current):is(:link, :visited) {
+body :is(.page_normal, .page_current):is(:link, :visited) {
     user-select: none;
-    padding: 6px 9px;
-    font-size: 14px;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 25px;
+    height: 25px;
+    padding: 0 !important;
+    font-size: 13px;
+    line-height: 1;
     border: none;
-    border-radius: var(--box-border-radius);
+    border-radius: 50% !important;
+    margin: 0 2px;
+    text-decoration: none !important;
 }
 body .page_normal:is(:link, :visited) {
     font-weight: 500;
+    color: var(--v2p-color-font-primary);
     background-color: var(--v2p-color-bg-content);
-    box-shadow: 0 2px 2px var(--box-background-hover-color);
-    transition: transform 0.25s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 body .page_normal:is(:link, :visited):hover {
-    transform: scale(1.1) translateY(-2px);
+    background-color: var(--v2p-color-button-background-hover);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 body .page_current:is(:link, :visited) {
     pointer-events: none;
     font-weight: bold;
-    background-color: var(--box-background-hover-color);
+    color: #fff !important;
+    background-color: var(--v2p-color-accent-500, #333) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+/* Previous/Next buttons customized */
+/* 仅针对 .normal_page_right (通常是分页的小箭头按钮)，去掉 generic .normal 以免误伤“现在注册”等普通按钮 */
+body .super.button.normal_page_right:not(button) {
+    display: inline-block !important; /* Fix table-cell layout issue */
+    vertical-align: middle;
+    text-align: center;
+    width: 25px;
+    height: 25px;
+    line-height: 25px !important;
+    padding: 0 !important;
+    font-size: 12px;
+    border: none !important;
+    border-radius: 50% !important;
+    margin: 0 2px;
+    background-color: var(--v2p-color-bg-content) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    cursor: pointer;
+}
+body .super.button.normal_page_right:not(button):hover,
+body .super.button.normal_page_right:not(button).hover_now {
+    background-color: var(--v2p-color-button-background-hover) !important;
+}
+body .super.button.disable_now {
+    opacity: 0.4;
+    pointer-events: none;
     box-shadow: none;
 }
 body .page_input {
@@ -799,6 +1178,9 @@ body .dock_area {
 }
 body .member-activity-bar {
     background-color: var(--v2p-color-divider);
+}
+body .member-activity-bar {
+    width:auto !important;
 }
 body .member-activity-bar .member-activity-start {
     background-color: var(--v2p-color-accent-200);
@@ -975,6 +1357,29 @@ a.tab:active, a.tab:link, a.tab:visited {
 #topic_thank {
     line-height:1;
     }
+/* 主题页操作按钮图标化（收藏/分享/忽略/感谢） */
+#Main .header .fr {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+#Main .header .fr a.op.v2p-op-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    line-height: 1 !important;
+    font-size: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#Main .header .fr a.op.v2p-op-icon svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
 body .cell_ops {
     background-color: rgba(0, 0, 0, 0);
 }
@@ -1368,6 +1773,9 @@ body .onoffswitch {
     font-size: 14px;
     font-weight: 400;
 }
+html.v2p-topnav-pending #Top .tools {
+    visibility: hidden;
+}
 #Top .tools .top {
     height: 26px;
     padding: 0 6px;
@@ -1659,14 +2067,59 @@ body .onoffswitch {
     padding: var(--v2p-tp-tabs-pd);
     background-color: var(--v2p-color-bg-content);
 }
-#Main #Tabs .tab_current {
-    margin-right:0;
+html.v2p-tabs-pending #Tabs {
+    visibility: hidden;
 }
-#Main #Tabs .tab {
+#Main #Tabs .tab_current,
+#Tabs .tab_current {
+    background-color: var(--v2p-color-accent-500) !important;
+    color: #fff !important;
+    border: 1px solid transparent !important;
+}
+#Main #Tabs .tab,
+#Main #Tabs .tab_current,
+#Tabs .tab,
+#Tabs .tab_current {
     margin: 3px 4px;
+    padding: 4px 8px;
+    border-radius: 20px;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    gap: 4px;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+}
+#Main #Tabs .tab svg,
+#Tabs .tab svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
 }
 #Main #Tabs .tab.v2p-hover-btn::before {
     inset: 0;
+    border: 1px solid transparent;
+    box-sizing: border-box;
+    transform: none;
+    opacity: 0;
+    display: none !important;
+}
+#Main #Tabs .tab.v2p-hover-btn:hover::before {
+    transform: none;
+    opacity: 1;
+    display: none !important;
+}
+#Main #Tabs .tab.v2p-hover-btn,
+#Tabs .tab.v2p-hover-btn {
+    overflow: hidden;
+}
+/* Tabs hover 直接用背景色，禁用伪元素动画 */
+#Main #Tabs .tab.v2p-hover-btn:hover,
+#Tabs .tab.v2p-hover-btn:hover {
+    background-color: var(--v2p-color-bg-hover-btn);
 }
 #Main #SecondaryTabs {
     padding: 5px 20px;
@@ -1725,7 +2178,7 @@ a.topic-link:active,a.topic-link:link {
     line-height: 1.5;
 }
 #Main #reply-box .flex-one-row:last-of-type {
-    
+
     justify-content: flex-start;
 }
 #Main #reply-box .flex-one-row:last-of-type .gray {
@@ -1766,6 +2219,10 @@ a.topic-link:active,a.topic-link:link {
 #Main #notifications .cell[id^="n"] .topic-link:visited {
     color: var(--v2p-color-font-quaternary);
 }
+#Main #notifications .cell[id^="n"] > table > tbody > tr > td:first-child {
+    width: 50px !important;
+}
+
 #Main .cell_tabs .cell_tab_current {
     font-weight: bold;
     border-color: var(--v2p-color-foreground);
@@ -1859,6 +2316,7 @@ html.v2p-theme-dark-default body,
     --v2p-color-button-background-hover: #444c56;
     --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
     --v2p-color-bg-content: #22272e;
+    --v2p-color-bg-content-rgb: 34, 39, 46;
     --v2p-color-bg-hover-btn: var(--v2p-color-button-background-hover);
     --v2p-color-bg-subtle: #444c56;
     --v2p-color-bg-input: var(--v2p-color-background);
@@ -1956,8 +2414,8 @@ html.v2p-theme-dark-default #search-container::before,
     html.v2p-theme-dark-default #Main #Tabs .tab_current,
     html.v2p-theme-dark-default #Tabs .tab_current,
     html.v2p-theme-dark-default .v2p-mobile #Tabs a.tab_current {
-        color: var(--v2p-color-bg-content) !important;
-        background-color: var(--v2p-color-foreground) !important;
+        color: #fff !important;
+        background-color: var(--v2p-color-accent-500) !important;
         border: none !important;
     }
 
@@ -1999,6 +2457,15 @@ html.v2p-theme-dark-default #search-container::before,
          background-color:var(--v2p-color-main-100);
          margin-top:-3px;
          border-radius:99px;
+    }
+    /* PRO 标识深色模式适配 */
+    html.v2p-theme-dark-default .badge.pro,
+    :root body.v2p-theme-dark-default .badge.pro,
+    :root[data-darkreader-scheme="dark"] body .badge.pro,
+    :root body:has(#Wrapper.Night) .badge.pro {
+         color: #6ee7b7 !important;
+         background-color: #064e3b !important;
+         border-color: #34d399 !important;
     }
 
 .cell.item > table > tbody > tr > td:nth-child(2) {
@@ -2164,6 +2631,7 @@ body.v2p-theme-dawn,
     --v2p-color-button-background-hover: hsl(var(--v2p-color-text) / 15%);
     --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
     --v2p-color-bg-content: hsl(var(--v2p-color-surface));
+    --v2p-color-bg-content-rgb: 250, 244, 237;
     --v2p-color-bg-footer: var(--v2p-color-bg-content);
     --v2p-color-bg-hover-btn: rgb(152 147 165 / 10%);
     --v2p-color-bg-subtle: hsl(var(--v2p-color-pine) / 10%);
@@ -2268,6 +2736,7 @@ body.v2p-theme-aqua,
 
     /* --- 界面元素 --- */
     --v2p-color-bg-content: hsl(var(--v2p-color-surface)); /* 内容卡片使用纯白 */
+    --v2p-color-bg-content-rgb: 255, 255, 255;
     --v2p-color-bg-footer: var(--v2p-color-bg-content);
     --v2p-color-bg-hover-btn: hsl(var(--v2p-color-iris) / 10%); /* 按钮悬停使用冷色高光 */
     --v2p-color-bg-subtle: hsl(var(--v2p-color-iris) / 10%);
@@ -2351,7 +2820,7 @@ body #Logo.v2p-logo {
     content: "";
     position: absolute;
     z-index: -1;
-    inset: 0 -5px;
+    inset: 0;
     transform: scale(0.65);
     opacity: 0;
     background-color: var(--v2p-color-bg-hover-btn);
@@ -2422,11 +2891,6 @@ body #Logo.v2p-logo {
     box-shadow: 0 0 0 3px var(--v2p-color-bg-content);
 }
 
-.page_current {
-    padding: 2px 5px;
-    border-radius: var(--box-border-radius);
-    margin: 0 1px;
-}
 .v2p-tool-box {
     position: sticky;
     z-index: var(--zidx-tools-card);
@@ -2615,7 +3079,7 @@ a.v2p-topic-preview-title-link:hover {
     border-radius: 8px;
     box-shadow: var(--v2p-widget-shadow);
     position: absolute;
-    z-index: var(--zidx-popup);
+    z-index: 2000; /* Ensure it's above other elements */
     top: 0;
     left: 0;
 }
@@ -2886,6 +3350,9 @@ a.v2p-topic-preview-title-link:hover {
 .v2p-member-card .v2p-info-right {
     padding: 2px 0;
 }
+.member-activity-mobile-wrapper {
+    margin:0 10px !important;
+}
 .v2p-member-card .v2p-avatar-box {
     overflow: hidden;
     display: inline-block;
@@ -3042,6 +3509,18 @@ a.v2p-topic-preview-title-link:hover {
     color: var(--v2p-color-button-foreground);
     background: var(--v2p-color-button-background-hover);
     box-shadow: var(--button-hover-shadow);
+}
+.v2p-em#Top>.content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 5px;
+}
+/* 屏蔽原生主题切换按钮 */
+/* 屏蔽原生主题切换按钮 (精确匹配) */
+a.light-toggle[href^="/settings/night/toggle"],
+a[href*="/settings/night/toggle"] {
+    display: none !important;
 }
 .v2p-empty-content {
     display: flex;
@@ -3203,9 +3682,11 @@ a.v2p-topic-preview-title-link:hover {
     padding: 2px 0;
 }
 .v2p-color-mode-toggle {
-    width: 22px;
-    height: 22px;
-    opacity: 0.8;
+    height: 25px !important;
+    padding: 5px !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center;
 }
 .v2p-color-mode-toggle:hover {
     opacity: 1;
@@ -3430,14 +3911,62 @@ a:link.v2p-topic-preview-retry {
     border: var(--v2p-color-orange-50);
     border-radius: var(--v2p-box-radius);
 }
+/* 隐藏节点侧栏提示块（含内联样式警示） */
+#node_sidebar {
+    display: none !important;
+}
+/* 隐藏包含 #node_sidebar 的父容器，避免留下空白块 */
+.box:has(#node_sidebar) {
+    display: none !important;
+}
+html.v2p-theme-dark-default #node_sidebar,
+:root body.v2p-theme-dark-default #node_sidebar,
+:root .v2p-theme-dark-default #node_sidebar,
+:root[data-darkreader-scheme="dark"] body #node_sidebar,
+:root body:has(#Wrapper.Night) #node_sidebar {
+    background-color: var(--v2p-color-bg-block) !important;
+    color: var(--v2p-color-foreground) !important;
+    border: 1px solid var(--v2p-color-border) !important;
+    border-radius: var(--v2p-box-radius) !important;
+}
+html.v2p-theme-dark-default #node_sidebar a,
+:root body.v2p-theme-dark-default #node_sidebar a,
+:root .v2p-theme-dark-default #node_sidebar a,
+:root[data-darkreader-scheme="dark"] body #node_sidebar a,
+:root body:has(#Wrapper.Night) #node_sidebar a {
+    color: var(--v2p-color-foreground) !important;
+}
 .v2p-mobile .content {
     padding: 0 !important;
     }
 .v2p-mobile #site-header #site-header-menu #menu-body {
-    border-radius:18px !important;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
-    border: var(--v2p-color-orange-50);
-
+    border-radius: 14px !important;
+    box-shadow: var(--v2p-widget-shadow);
+    border: 1px solid var(--box-border-color);
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75) !important;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    padding: 6px !important;
+    overflow: hidden;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell a {
+    display: flex !important;
+    align-items: center;
+    padding: 6px 12px !important;
+    margin: 2px 0;
+    border-radius: 10px;
+    font-size: 14px !important;
+    color: var(--v2p-color-font-secondary);
+    transition: background-color 0.15s;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell a:hover {
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.5);
+    color: var(--v2p-color-font-primary);
 }
 .v2p-mobile .v2p-likes-box {
     vertical-align: middle !important;
@@ -3451,7 +3980,7 @@ a:link.v2p-topic-preview-retry {
     font-size:14px !important;
 }
 .v2p-mobile #Tabs a {
-    font-size:13px !important;
+    font-size:14px !important;
     border-radius:999px;
     margin:2px;
     }
@@ -3535,9 +4064,7 @@ a:link.v2p-topic-preview-retry {
     margin: 0 0 10px 0;
 
 }
-.v2p-mobile .cell {
-    padding:5px 8px !important;
-}
+
 .v2p-mobile .cell.item table tr > td:last-child {
 
     min-width: 30px !important;
@@ -3700,9 +4227,7 @@ width:30px !important;
 .v2p-mobile .fr svg {
   vertical-align: middle !important;
 }
-#LogoMobile {
-background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex%402x.svg") !important;
-}
+
 /* 深色模式下反转 Logo 颜色 */
 html.Night #site-header-logo #LogoMobile {
     filter: invert(1) brightness(1.2) contrast(1.1);
@@ -3712,561 +4237,896 @@ html.Night #site-header-logo #LogoMobile {
         border-radius: 18px !important;
     }
 }
+
+/* === 主题选择菜单 === */
+.v2p-theme-menu {
+    position: absolute;
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75);
+    border: 1px solid var(--box-border-color);
+    box-shadow: var(--v2p-widget-shadow);
+    border-radius: 14px;
+    padding: 6px;
+    display: none; /* Initially hidden */
+    flex-direction: column;
+    width: 160px;
+    z-index: 2000;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+.v2p-theme-menu.show {
+    display: flex;
+    animation: v2p-fade-in 0.15s ease-out;
+}
+.v2p-theme-menu-item {
+    padding: 10px 12px;
+    margin: 2px 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Gap between icon and label */
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--v2p-color-font-secondary);
+    transition: background-color 0.15s;
+}
+.v2p-theme-menu-item:hover {
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.5);
+    color: var(--v2p-color-font-primary);
+}
+.v2p-theme-menu-item.active {
+    color: var(--v2p-color-font-primary);
+    font-weight: 500;
+}
+.v2p-theme-menu-item .icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--v2p-color-accent);
+}
+@keyframes v2p-fade-in {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes v2p-fade-in-up {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+/* 移动端主题菜单向上弹出动画 */
+.v2p-mobile .v2p-theme-menu.show {
+    animation: v2p-fade-in-up 0.15s ease-out;
+}
 `;
 
-  // 尽早注入 CSS
-  if (typeof GM_addStyle !== "undefined") {
-    GM_addStyle(style);
-  } else {
-    // 理论上油猴一定有 GM_addStyle，这里只是兜底
-    const el = document.createElement("style");
-    el.type = "text/css";
-    el.textContent = style;
-    (document.head || document.documentElement).appendChild(el);
-  }
+    // 尽早注入 CSS
+    if (typeof GM_addStyle !== "undefined") {
+        GM_addStyle(style);
+    } else {
+        // 理论上油猴一定有 GM_addStyle，这里只是兜底
+        const el = document.createElement("style");
+        el.type = "text/css";
+        el.textContent = style;
+        (document.head || document.documentElement).appendChild(el);
+    }
 
     // ========= 2. 主题模式 & 类名处理 =========
-  // 依次：亮色 → 晨光 → 水色 → 暗色 → 跟随系统
-  const THEME_MODES = ["light", "dawn", "aqua", "dark", "auto"];
+    // 依次：亮色 → 晨光 → 水色 → 暗色 → 跟随系统
+    const THEME_MODES = ["light", "dawn", "aqua", "dark", "auto"];
 
-  const STORAGE_KEY = "user_preferred_theme_mode";
-  const TOGGLE_SELECTOR = ".v2p-color-mode-toggle";
+    const STORAGE_KEY = "user_preferred_theme_mode";
+    const TOGGLE_SELECTOR = ".v2p-color-mode-toggle";
 
-  // 记录站点原生的 SITE_NIGHT（0: 浅色, 1: 深色）
-  let nativeNight = null;
+    // 记录站点原生的 SITE_NIGHT（0: 浅色, 1: 深色）
+    let nativeNight = null;
 
-  // 检测当前页原生的深色 / 浅色状态：
-  // 1) 优先用第一个 IIFE 写入的 window.__V2P_NATIVE_NIGHT__
-  // 2) 其次看 <link> 里是 tomorrow.css 还是 tomorrow-night.css
-  // 3) 再不行就扫一遍 <script> 里的 SITE_NIGHT
+    // 检测当前页原生的深色 / 浅色状态：
+    // 1) 优先用第一个 IIFE 写入的 window.__V2P_NATIVE_NIGHT__
+    // 2) 其次看 <link> 里是 tomorrow.css 还是 tomorrow-night.css
+    // 3) 再不行就扫一遍 <script> 里的 SITE_NIGHT
     function detectNativeNight() {
-    if (nativeNight !== null) return nativeNight;
+        if (nativeNight !== null) return nativeNight;
 
-    // 0. 如果前面的 MutationObserver 已经写好了，就直接用
-    if (typeof window !== "undefined" && typeof window.__V2P_NATIVE_NIGHT__ === "number") {
-      nativeNight = window.__V2P_NATIVE_NIGHT__;
-      return nativeNight;
-    }
-
-    try {
-      // 1. 看 Wrapper / body / html 有没有 Night 类（有些页面 / 移动端会这么标）
-      const wrapper = document.getElementById("Wrapper");
-      const body = document.body;
-      const docEl = document.documentElement;
-
-      if (wrapper && wrapper.classList.contains("Night")) {
-        nativeNight = 1;
-        return nativeNight;
-      }
-      if (body && body.classList.contains("Night")) {
-        nativeNight = 1;
-        return nativeNight;
-      }
-      if (docEl && docEl.classList.contains("Night")) {
-        nativeNight = 1;
-        return nativeNight;
-      }
-
-      // 2. 看代码高亮的 CSS，是 tomorrow 还是 tomorrow-night
-      const head = document.head || document.documentElement;
-      if (head) {
-        const link = head.querySelector(
-          'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
-        );
-        if (link) {
-          const href = link.getAttribute("href") || "";
-          if (href.includes("tomorrow-night.css")) {
-            nativeNight = 1;
+        // 0. 如果前面的 MutationObserver 已经写好了，就直接用
+        if (
+            typeof window !== "undefined" &&
+            typeof window.__V2P_NATIVE_NIGHT__ === "number"
+        ) {
+            nativeNight = window.__V2P_NATIVE_NIGHT__;
             return nativeNight;
-          }
-          if (href.includes("tomorrow.css")) {
-            nativeNight = 0;
-            return nativeNight;
-          }
         }
-      }
 
-      // 3. 扫一遍 <script> 里的 SITE_NIGHT = 0/1
-      const scripts = document.querySelectorAll("script");
-      for (const s of scripts) {
-        const txt = s.textContent || "";
-        const m = txt.match(/SITE_NIGHT\s*=\s*(\d)/);
-        if (m) {
-          nativeNight = Number(m[1]) === 1 ? 1 : 0;
-          return nativeNight;
-        }
-      }
+        try {
+            // 1. 看 Wrapper / body / html 有没有 Night 类（有些页面 / 移动端会这么标）
+            const wrapper = document.getElementById("Wrapper");
+            const body = document.body;
+            const docEl = document.documentElement;
 
-      // 4. 移动端顶栏的图标：<img class="site-theme-toggle mobile">
-      // 一般规则是：当前是暗色 → 图标是“Light”；当前是亮色 → 图标是“Dark”
-      const mobileToggleImg =
-        document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
-        document.querySelector("img.site-theme-toggle");
-      if (mobileToggleImg) {
-        const src = mobileToggleImg.getAttribute("src") || "";
-        const alt = (mobileToggleImg.getAttribute("alt") || "").toLowerCase();
+            if (wrapper && wrapper.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
+            if (body && body.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
+            if (docEl && docEl.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
 
-        if (src.includes("toggle-light") || alt.includes("light")) {
-          // 图标提示“切到 Light”，说明当前是 Dark
-          nativeNight = 1;
-          return nativeNight;
+            // 2. 看代码高亮的 CSS，是 tomorrow 还是 tomorrow-night
+            const head = document.head || document.documentElement;
+            if (head) {
+                const link = head.querySelector(
+                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+                );
+                if (link) {
+                    const href = link.getAttribute("href") || "";
+                    if (href.includes("tomorrow-night.css")) {
+                        nativeNight = 1;
+                        return nativeNight;
+                    }
+                    if (href.includes("tomorrow.css")) {
+                        nativeNight = 0;
+                        return nativeNight;
+                    }
+                }
+            }
+
+            // 3. 扫一遍 <script> 里的 SITE_NIGHT = 0/1
+            const scripts = document.querySelectorAll("script");
+            for (const s of scripts) {
+                const txt = s.textContent || "";
+                const m = txt.match(/SITE_NIGHT\s*=\s*(\d)/);
+                if (m) {
+                    nativeNight = Number(m[1]) === 1 ? 1 : 0;
+                    return nativeNight;
+                }
+            }
+
+            // 4. 移动端顶栏的图标：<img class="site-theme-toggle mobile">
+            // 一般规则是：当前是暗色 → 图标是“Light”；当前是亮色 → 图标是“Dark”
+            const mobileToggleImg =
+                document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
+                document.querySelector("img.site-theme-toggle");
+            if (mobileToggleImg) {
+                const src = mobileToggleImg.getAttribute("src") || "";
+                const alt = (mobileToggleImg.getAttribute("alt") || "").toLowerCase();
+
+                if (src.includes("toggle-light") || alt.includes("light")) {
+                    // 图标提示“切到 Light”，说明当前是 Dark
+                    nativeNight = 1;
+                    return nativeNight;
+                }
+                if (src.includes("toggle-dark") || alt.includes("dark")) {
+                    // 图标提示“切到 Dark”，说明当前是 Light
+                    nativeNight = 0;
+                    return nativeNight;
+                }
+            }
+        } catch (err) {
+            // ignore
         }
-        if (src.includes("toggle-dark") || alt.includes("dark")) {
-          // 图标提示“切到 Dark”，说明当前是 Light
-          nativeNight = 0;
-          return nativeNight;
-        }
-      }
-    } catch (err) {
-      // ignore
+
+        // 实在判断不出来，就当成浅色
+        nativeNight = 0;
+        return nativeNight;
     }
-
-    // 实在判断不出来，就当成浅色
-    nativeNight = 0;
-    return nativeNight;
-  }
-
 
     // 根据 isDark 同步：
-  // 1) 请求原始的 night toggle URL，修改服务端 SITE_NIGHT
-  // 2) 尽量把当前页面的 tomorrow*.css 也切到对应版本，避免代码高亮闪屏
-  // 3) 同步移动端菜单里的图标
-  function syncNativeNight(isDark) {
-    const target = isDark ? 1 : 0;
-    const current = detectNativeNight();
-    if (current === target) return;
+    // 1) 请求原始的 night toggle URL，修改服务端 SITE_NIGHT
+    // 2) 尽量把当前页面的 tomorrow*.css 也切到对应版本，避免代码高亮闪屏
+    // 3) 同步移动端菜单里的图标
+    function syncNativeNight(isDark) {
+        const target = isDark ? 1 : 0;
+        const current = detectNativeNight();
+        if (current === target) return;
 
-    nativeNight = target;
+        nativeNight = target;
 
-    // ① 通知服务端切换 SITE_NIGHT
-    try {
-      // 先按桌面端的选择器找
-      let legacy = document.querySelector(
-        "#Rightbar .light-toggle, #Top .light-toggle, .top .light-toggle",
-      );
+        // ① 通知服务端切换 SITE_NIGHT
+        try {
+            // 先按桌面端的选择器找
+            let legacy = document.querySelector(
+                "#Rightbar .light-toggle, #Top .light-toggle, .top .light-toggle",
+            );
 
-      // 如果是移动端，可能没有 light-toggle class，用 href 来兜底
-      if (!legacy) {
-        legacy = document.querySelector('a[href*="/settings/night/toggle"]');
-      }
-
-      const href = legacy && legacy.getAttribute("href");
-      if (href) {
-        fetch(href, { method: "GET", credentials: "include" }).catch(() => {});
-      }
-    } catch (err) {
-      // ignore
-    }
-
-    // ② 同步当前页面的 tomorrow / tomorrow-night CSS（代码高亮）
-    try {
-      const head = document.head || document.documentElement;
-      if (head) {
-        const link = head.querySelector(
-          'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
-        );
-        if (link) {
-          const href = link.getAttribute("href") || "";
-          if (target === 1) {
-            // 切到 tomorrow-night.css
-            if (href.includes("tomorrow.css") && !href.includes("tomorrow-night.css")) {
-              link.href = href.replace("tomorrow.css", "tomorrow-night.css");
+            // 如果是移动端，可能没有 light-toggle class，用 href 来兜底
+            if (!legacy) {
+                legacy = document.querySelector('a[href*="/settings/night/toggle"]');
             }
-          } else {
-            // 切回 tomorrow.css
-            if (href.includes("tomorrow-night.css")) {
-              link.href = href.replace("tomorrow-night.css", "tomorrow.css");
+
+            const href = legacy && legacy.getAttribute("href");
+            if (href) {
+                fetch(href, { method: "GET", credentials: "include" }).catch(() => { });
             }
-          }
+        } catch (err) {
+            // ignore
         }
-      }
-    } catch (err) {
-      // ignore
-    }
 
-    // ③ 同步移动端菜单里的图标显示
-    try {
-      const mobileToggleImg =
-        document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
-        document.querySelector("img.site-theme-toggle");
-
-      if (mobileToggleImg) {
-        if (target === 1) {
-          // 当前暗色 → 图标应该显示 Light
-          mobileToggleImg.src = "/static/img/toggle-light.png";
-          mobileToggleImg.alt = "Light";
-        } else {
-          // 当前亮色 → 图标应该显示 Dark
-          mobileToggleImg.src = "/static/img/toggle-dark.png";
-          mobileToggleImg.alt = "Dark";
+        // ② 同步当前页面的 tomorrow / tomorrow-night CSS（代码高亮）
+        try {
+            const head = document.head || document.documentElement;
+            if (head) {
+                const link = head.querySelector(
+                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+                );
+                if (link) {
+                    const href = link.getAttribute("href") || "";
+                    if (target === 1) {
+                        // 切到 tomorrow-night.css
+                        if (
+                            href.includes("tomorrow.css") &&
+                            !href.includes("tomorrow-night.css")
+                        ) {
+                            link.href = href.replace("tomorrow.css", "tomorrow-night.css");
+                        }
+                    } else {
+                        // 切回 tomorrow.css
+                        if (href.includes("tomorrow-night.css")) {
+                            link.href = href.replace("tomorrow-night.css", "tomorrow.css");
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            // ignore
         }
-      }
-    } catch (err) {
-      // ignore
-    }
-  }
 
+        // ③ 同步移动端菜单里的图标显示
+        try {
+            const mobileToggleImg =
+                document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
+                document.querySelector("img.site-theme-toggle");
 
-  // 缓存当前主题模式，减少对 localStorage 的访问
-  let currentMode = null;
-
-  function getSavedMode() {
-    if (currentMode && THEME_MODES.includes(currentMode)) return currentMode;
-
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (THEME_MODES.includes(raw)) {
-      currentMode = raw;
-      return raw;
-    }
-
-    // 本地没有记录时，根据站点原生 SITE_NIGHT 决定初始模式：
-    // SITE_NIGHT = 1 → 我们默认用 v2p-theme-dark-default
-    // SITE_NIGHT = 0 → 默认用 v2p-theme-light-default
-    const native = detectNativeNight();
-    currentMode = native === 1 ? "dark" : "light";
-    try {
-      localStorage.setItem(STORAGE_KEY, currentMode);
-    } catch (e) {}
-    return currentMode;
-  }
-
-
-
-  function isSystemDark() {
-    try {
-      return (
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * 给元素应用主题类（返回当前是否为深色）
-   */
-  function applyThemeToElement(element, effectiveMode) {
-    if (!element) return false;
-
-    const cls = element.classList;
-    const toRemove = [];
-
-    cls.forEach((c) => {
-      if (c.startsWith("v2p-theme-") || c === "Night") {
-        toRemove.push(c);
-      }
-    });
-    toRemove.forEach((c) => cls.remove(c));
-
-    let isDark = false;
-    switch (effectiveMode) {
-      case "dark":
-        cls.add("v2p-theme-dark-default", "Night");
-        isDark = true;
-        break;
-      case "light":
-        cls.add("v2p-theme-light-default");
-        break;
-      case "dawn":
-        cls.add("v2p-theme-dawn");
-        break;
-      case "aqua":
-        cls.add("v2p-theme-aqua");
-        break;
-      default:
-        break;
-    }
-    return isDark;
-  }
-
-  /**
-   * 同时确保 html 和 body 都应用主题
-   */
-  function ensureThemeOnBothElements(mode) {
-    const html = document.documentElement;
-    const body = document.body;
-    const wrapper = document.getElementById("Wrapper"); // ★ 新增
-
-    // 仅在 auto 模式下检测一次系统主题，避免重复调用 matchMedia
-    let effectiveMode = mode;
-    if (mode === "auto") {
-      effectiveMode = isSystemDark() ? "dark" : "light";
-    }
-
-    let isDark = effectiveMode === "dark";
-
-    if (html) applyThemeToElement(html, effectiveMode);
-    if (body) applyThemeToElement(body, effectiveMode);
-    if (wrapper) applyThemeToElement(wrapper, effectiveMode); // ★ 新增
-
-    return isDark;
-  }
-
-  /**
-   * 更新右侧切换按钮的文案/状态（可以按需求再优化文案）
-   */
-  function updateToggleButtons(mode, isDark) {
-    const toggles = document.querySelectorAll(TOGGLE_SELECTOR);
-    const nameMap = {
-      light: "亮色",
-      dark: "暗色",
-      dawn: "晨光",
-      aqua: "水蓝",
-      auto: "跟随系统",
-    };
-
-    toggles.forEach((btn) => {
-      btn.setAttribute("data-theme-mode", mode);
-      btn.setAttribute("aria-pressed", isDark ? "true" : "false");
-
-      const label = nameMap[mode] || "";
-      if (label) {
-        btn.setAttribute("aria-label", label);
-        btn.title = label;
-      }
-
-      // ★ 移动端菜单里的图片按钮
-      const mobileImg = btn.querySelector("img.site-theme-toggle.mobile");
-      if (mobileImg) {
-        if (isDark) {
-          mobileImg.src = "/static/img/toggle-light.png";
-          mobileImg.alt = "Light";
-        } else {
-          mobileImg.src = "/static/img/toggle-dark.png";
-          mobileImg.alt = "Dark";
+            if (mobileToggleImg) {
+                if (target === 1) {
+                    // 当前暗色 → 图标应该显示 Light
+                    mobileToggleImg.src = "/static/img/toggle-light.png";
+                    mobileToggleImg.alt = "Light";
+                } else {
+                    // 当前亮色 → 图标应该显示 Dark
+                    mobileToggleImg.src = "/static/img/toggle-dark.png";
+                    mobileToggleImg.alt = "Dark";
+                }
+            }
+        } catch (err) {
+            // ignore
         }
-        return;
-      }
-
-      // ① PC 端 / 顶部 .light-toggle：用 SVG 图标
-      if (btn.classList.contains("light-toggle")) {
-        btn.innerHTML = isDark
-          ? '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>'
-          : '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
-
-        return;
-      }
-
-      // ② 其它纯文字按钮，用文字显示当前模式
-      if (!btn.children.length) {
-        if (!btn.dataset.originalLabel) {
-          btn.dataset.originalLabel = btn.textContent || "";
-        }
-        btn.textContent = label || btn.dataset.originalLabel;
-      }
-    });
-  }
-
-  /**
-   * 点击切换主题：按数组顺序循环
-   */
-  /**
-   * 确保页面上存在主题切换按钮：
-   * - 优先使用已经带有 .v2p-color-mode-toggle 的元素
-   * - 否则复用 V2EX 右侧 / 顶部原生的 .light-toggle 按钮并加上 class
-   */
-  function ensureToggleButtons() {
-    let toggles = document.querySelectorAll(TOGGLE_SELECTOR);
-    if (toggles.length) return toggles;
-
-    // ① PC 端 / 顶部原有的 light-toggle 按钮
-    const legacyToggles = document.querySelectorAll(
-      "#Rightbar .light-toggle, #Top .light-toggle, .top .light-toggle",
-    );
-    legacyToggles.forEach((el) => {
-      el.classList.add("v2p-color-mode-toggle");
-    });
-
-    // ② 移动端菜单里的图片按钮：<img class="site-theme-toggle mobile">
-    const mobileToggleImg = document.querySelector(
-      "#menu-body img.site-theme-toggle.mobile",
-    );
-    if (mobileToggleImg) {
-      const mobileBtn = mobileToggleImg.closest("a") || mobileToggleImg;
-
-      // 让它也变成脚本识别的「主题按钮」
-      mobileBtn.classList.add("v2p-color-mode-toggle", "light-toggle");
-
-      // 删除原来的 img，交给 updateToggleButtons 注入 SVG
-      mobileToggleImg.remove();
     }
 
-    toggles = document.querySelectorAll(TOGGLE_SELECTOR);
-    return toggles;
-  }
+    // 缓存当前主题模式，减少对 localStorage 的访问
+    let currentMode = null;
 
-  function bindToggleEvents() {
-    const toggles = ensureToggleButtons();
-    if (!toggles.length) return;
+    function getSavedMode() {
+        if (currentMode && THEME_MODES.includes(currentMode)) return currentMode;
 
-    const current = currentMode || getSavedMode();
-    const isDark = ensureThemeOnBothElements(current);
-    updateToggleButtons(current, isDark);
-    syncNativeNight(isDark);
-
-    toggles.forEach((btn) => {
-      btn.addEventListener(
-        "click",
-        (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const cur = currentMode || getSavedMode();
-          const idx = THEME_MODES.indexOf(cur);
-          const nextIndex = idx === -1 ? 0 : (idx + 1) % THEME_MODES.length;
-          const next = THEME_MODES[nextIndex];
-
-          currentMode = next;
-          localStorage.setItem(STORAGE_KEY, next);
-
-          const dark = ensureThemeOnBothElements(next);
-          updateToggleButtons(next, dark);
-          // 当切到 v2p-theme-dark-default 时，通知原站进入夜间（SITE_NIGHT=1）
-          // 其它几种浅色主题则同步到 SITE_NIGHT=0
-          syncNativeNight(dark);
-        },
-        { passive: false },
-      );
-    });
-
-    // 系统主题变化时，如果是 auto，就跟着变
-    if (window.matchMedia) {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      mq.addEventListener("change", () => {
-        if ((currentMode || getSavedMode()) === "auto") {
-          const dark = ensureThemeOnBothElements("auto");
-          updateToggleButtons("auto", dark);
-          syncNativeNight(dark);
-
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (THEME_MODES.includes(raw)) {
+            currentMode = raw;
+            return raw;
         }
-      });
+
+        // 本地没有记录时，根据站点原生 SITE_NIGHT 决定初始模式：
+        // SITE_NIGHT = 1 → 我们默认用 v2p-theme-dark-default
+        // SITE_NIGHT = 0 → 默认用 v2p-theme-light-default
+        const native = detectNativeNight();
+        currentMode = native === 1 ? "dark" : "light";
+        try {
+            localStorage.setItem(STORAGE_KEY, currentMode);
+        } catch (e) { }
+        return currentMode;
     }
-  }
 
-  // ========= 3. 尽可能早地应用主题，减少“先默认再变色”的闪一下 =========
-
-  // 初始化当前主题模式并尽可能早地应用，减少“先默认再变色”的闪烁
-  currentMode = getSavedMode();
-  // 先对 html / body 打类（即使 body 还没挂上来也问题不大）
-  ensureThemeOnBothElements(currentMode);
-
-  // body 还没出现时，用 MutationObserver 再补一刀
-  if (!document.body) {
-    const mo = new MutationObserver(() => {
-      if (document.body) {
-        ensureThemeOnBothElements(currentMode);
-        mo.disconnect();
-      }
-    });
-    mo.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-  }
-
-  // ========= 4. 移动端 Tabs 横向滚动 & 位置记忆 =========
-  function initMobileTabsScroll() {
-    const body = document.body;
-    if (!body || !body.classList.contains("v2p-mobile")) return;
-
-    // Tabs 容器：兼容首页 / 其他页面
-    const tabs = document.querySelector("#Main #Tabs, #Tabs");
-    if (!tabs) return;
-
-    const STORAGE_KEY = "v2p-mobile-tabs-scroll";
-
-    // 针对不同页面生成一个 key，避免互相干扰
-    const pageKey = (() => {
-      const path = location.pathname || "/";
-      const search = location.search || "";
-      try {
-        const params = new URLSearchParams(search);
-        const tab = params.get("tab") || "";
-        // 首页 tab 列表，用 tab 名区分；其他页面用路径
-        return tab ? `home?tab=${tab}` : path;
-      } catch {
-        return path + search;
-      }
-    })();
-
-    const fullKey = `${STORAGE_KEY}:${pageKey}`;
-
-    // 恢复滚动位置或居中当前 tab
-    const restoreOrCenter = () => {
-      const saved = localStorage.getItem(fullKey);
-
-      if (saved != null) {
-        const val = Number(saved);
-        if (!Number.isNaN(val)) {
-          tabs.scrollLeft = val;
-          return;
+    function isSystemDark() {
+        try {
+            return (
+                window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+            );
+        } catch {
+            return false;
         }
-      }
-
-      // 没有保存记录时，让当前 tab 居中显示
-      const current = tabs.querySelector(".tab_current");
-      if (!current) return;
-
-      const parentRect = tabs.getBoundingClientRect();
-      const itemRect = current.getBoundingClientRect();
-      const offset =
-        itemRect.left -
-        parentRect.left -
-        (parentRect.width - itemRect.width) / 2;
-
-      tabs.scrollLeft += offset;
-    };
-
-    // 等布局完成后再滚动，避免计算不准
-    (window.requestAnimationFrame || setTimeout)(restoreOrCenter, 0);
-
-    // 监听滚动，保存位置（用 rAF 做个简单节流）
-    let ticking = false;
-    tabs.addEventListener(
-      "scroll",
-      () => {
-        if (ticking) return;
-        ticking = true;
-
-        (window.requestAnimationFrame || setTimeout)(() => {
-          ticking = false;
-          localStorage.setItem(fullKey, String(tabs.scrollLeft));
-        }, 16);
-      },
-      { passive: true },
-    );
-  }
-
-  // DOMReady 后再绑定按钮事件 + 监听 Wrapper 动态变化
-  function onReady(fn) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", fn, { once: true });
-    } else {
-      fn();
     }
-  }
 
-  onReady(() => {
-    bindToggleEvents();
-    initMobileTabsScroll(); // ★ 新增：初始化移动端 Tabs 横向滚动 & 记忆
-    // 监听主容器的 DOM 变化，防止部分页面局部刷新后主题类丢失
-    const wrapper = document.getElementById("Wrapper");
-    if (wrapper) {
-      let reapplyScheduled = false;
-      const mo = new MutationObserver(() => {
-        // 使用 requestAnimationFrame 做简单节流，避免频繁重复执行
-        if (reapplyScheduled) return;
-        reapplyScheduled = true;
-        (window.requestAnimationFrame || setTimeout)(() => {
-          reapplyScheduled = false;
-          ensureThemeOnBothElements(currentMode || getSavedMode());
+    /**
+     * 给元素应用主题类（返回当前是否为深色）
+     */
+    function applyThemeToElement(element, effectiveMode) {
+        if (!element) return false;
+
+        const cls = element.classList;
+        const toRemove = [];
+
+        cls.forEach((c) => {
+            if (c.startsWith("v2p-theme-") || c === "Night") {
+                toRemove.push(c);
+            }
         });
-      });
-      mo.observe(wrapper, {
-        childList: true,
-        subtree: true,
-      });
+        toRemove.forEach((c) => cls.remove(c));
+
+        let isDark = false;
+        switch (effectiveMode) {
+            case "dark":
+                cls.add("v2p-theme-dark-default", "Night");
+                isDark = true;
+                break;
+            case "light":
+                cls.add("v2p-theme-light-default");
+                break;
+            case "dawn":
+                cls.add("v2p-theme-dawn");
+                break;
+            case "aqua":
+                cls.add("v2p-theme-aqua");
+                break;
+            default:
+                break;
+        }
+        return isDark;
     }
-  });
+
+    /**
+     * 同时确保 html 和 body 都应用主题
+     */
+    function ensureThemeOnBothElements(mode) {
+        const html = document.documentElement;
+        const body = document.body;
+        const wrapper = document.getElementById("Wrapper"); // ★ 新增
+
+        // 仅在 auto 模式下检测一次系统主题，避免重复调用 matchMedia
+        let effectiveMode = mode;
+        if (mode === "auto") {
+            effectiveMode = isSystemDark() ? "dark" : "light";
+        }
+
+        // The `isDark` value should be determined by the application to the main element (html)
+        // and then used for the return value.
+        // Apply to wrapper first if it exists.
+        if (wrapper) applyThemeToElement(wrapper, effectiveMode); // ★ 新增
+
+        // Apply to html and capture the isDark result
+        const isDark = applyThemeToElement(html, effectiveMode);
+
+        // Apply to body
+        if (body) {
+            applyThemeToElement(body, effectiveMode);
+        }
+
+        // [Loading Screen] Remove loader now specifically because theme is ready
+        if (typeof window.__V2P_REMOVE_LOADER__ === "function") {
+            window.__V2P_REMOVE_LOADER__();
+            window.__V2P_REMOVE_LOADER__ = null;
+        }
+
+        updateThemeColor(effectiveMode);
+
+        return isDark;
+    }
+
+    /**
+     * 更新浏览器的主题色（适配地址栏/顶栏颜色）
+     */
+    function updateThemeColor(mode) {
+        const colorMap = {
+            light: "#f2f3f5",
+            dawn: "#faf4ed", // 晨光主题背景色
+            aqua: "#f2f7fa", // 水色主题背景色
+            dark: "#1c2128",
+        };
+
+        const color = colorMap[mode] || colorMap.light;
+
+        let metas = document.querySelectorAll('meta[name="theme-color"]');
+        if (!metas || metas.length === 0) {
+            const meta = document.createElement("meta");
+            meta.name = "theme-color";
+            if (document.head) {
+                document.head.appendChild(meta);
+            } else {
+                document.documentElement.appendChild(meta);
+            }
+            metas = [meta];
+        }
+        metas.forEach((m) => {
+            m.content = color;
+        });
+    }
+
+    /**
+     * 更新右侧切换按钮的文案/状态（可以按需求再优化文案）
+     */
+    function updateToggleButtons(mode, isDark) {
+        const toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        const nameMap = {
+            light: "亮色",
+            dark: "暗色",
+            dawn: "晨光",
+            aqua: "水蓝",
+            auto: "跟随系统",
+        };
+
+        toggles.forEach((btn) => {
+            btn.setAttribute("data-theme-mode", mode);
+            btn.setAttribute("aria-pressed", isDark ? "true" : "false");
+
+            const label = nameMap[mode] || "";
+            if (label) {
+                btn.setAttribute("aria-label", label);
+                btn.title = label;
+            }
+
+            // ★ 移动端菜单里的图片按钮
+            const mobileImg = btn.querySelector("img.site-theme-toggle.mobile");
+            if (mobileImg) {
+                if (isDark) {
+                    mobileImg.src = "/static/img/toggle-light.png";
+                    mobileImg.alt = "Light";
+                } else {
+                    mobileImg.src = "/static/img/toggle-dark.png";
+                    mobileImg.alt = "Dark";
+                }
+                return;
+            }
+
+            // ① PC 端 / 顶部 .light-toggle：用 SVG 图标
+            if (btn.classList.contains("light-toggle")) {
+                btn.innerHTML = isDark
+                    ? '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom;"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>'
+                    : '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom;"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
+
+                return;
+            }
+
+            // ② 其它纯文字按钮，用文字显示当前模式
+            if (!btn.children.length) {
+                if (!btn.dataset.originalLabel) {
+                    btn.dataset.originalLabel = btn.textContent || "";
+                }
+                btn.textContent = label || btn.dataset.originalLabel;
+            }
+        });
+    }
+
+    /**
+     * 点击切换主题：按数组顺序循环
+     */
+    /**
+     * 确保页面上存在主题切换按钮：
+     * - 优先使用已经带有 .v2p-color-mode-toggle 的元素
+     * - 否则复用 V2EX 右侧 / 顶部原生的 .light-toggle 按钮并加上 class
+     */
+    function ensureToggleButtons() {
+        let toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        // 检查是否有「可见的」toggle 按钮（原生按钮可能被 CSS display:none 隐藏）
+        const visible = Array.from(toggles).filter(el => el.offsetHeight > 0);
+        if (visible.length) return toggles;
+
+        // 手动创建一个新的切换按钮，替代被屏蔽的原生按钮
+        // 1. 尝试在 #Top .tools 里插入
+        const topTools = document.querySelector("#Top .tools");
+        if (topTools) {
+            const newLink = document.createElement("a");
+            newLink.href = "javascript:;";
+            // 添加 light-toggle 类，以便 updateToggleButtons 能自动为它注入 SVG 图标
+            newLink.className =
+                "top v2p-hover-btn v2p-color-mode-toggle light-toggle";
+            newLink.title = "切换主题";
+            // newLink.innerHTML = "主题"; // 不需要文字了，会被 SVG 替换
+            topTools.appendChild(newLink);
+        }
+
+        // 2. 尝试在右侧边栏插入 (如果有 .light-toggle 的位置)
+        // const rightToggle = document.querySelector("#Rightbar .light-toggle");
+        // 也可以直接 append 到 #Rightbar 某个 box 里，视情况而定
+
+        // ② 移动端菜单里的图片按钮
+        // 在新版 V2EX 中，这个菜单可能是一个 #menu-body
+        const menuBody = document.getElementById("menu-body");
+        if (menuBody) {
+            // 找到原生的切换按钮链接 (注意：不仅是 .light-toggle，很多时候它只是一个普通的 a 标签，href 指向 /settings/night/toggle)
+            const nativeToggleLink = menuBody.querySelector(
+                'a[href*="/settings/night/toggle"]',
+            );
+
+            if (nativeToggleLink) {
+                // 1. 移除 href，防止 CSS (a[href*="/settings/night/toggle"] { display: none }) 把它隐藏
+                // 同时这也防止了点击触发原生的跳转
+                nativeToggleLink.removeAttribute("href");
+                nativeToggleLink.setAttribute("href", "javascript:;");
+
+                // 2. 加上我们的 trigger class，以及 V2EX 标准菜单项 class 'top'
+                nativeToggleLink.classList.add("v2p-color-mode-toggle");
+                nativeToggleLink.classList.add("top");
+
+                // 2.1 强制重置样式 (Nuclear Option)
+                // 使用 setProperty('...','important') 确保覆盖原生可能存在的 narrow width 规则
+                nativeToggleLink.style.setProperty(
+                    "align-items",
+                    "center",
+                    "important",
+                );
+                nativeToggleLink.style.setProperty("width", "100%", "important");
+                nativeToggleLink.style.setProperty("height", "auto", "important");
+                nativeToggleLink.style.setProperty(
+                    "white-space",
+                    "nowrap",
+                    "important",
+                );
+
+                nativeToggleLink.style.textAlign = "left";
+                nativeToggleLink.style.backgroundColor = "transparent";
+                nativeToggleLink.style.padding = "10px 15px"; // 恢复 padding 确保对齐
+                nativeToggleLink.style.boxSizing = "border-box";
+
+                // 3. 替换内容
+                nativeToggleLink.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: block; margin-right: 10px; opacity: 0.7; color: var(--v2p-color-font-secondary);"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                    <span>主题设置</span>
+                `;
+            }
+        }
+
+        toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        return toggles;
+    }
+
+    function bindToggleEvents() {
+        console.log("V2P: bindToggleEvents start");
+        // 尝试初始化一下，但不依赖返回值
+        ensureToggleButtons();
+
+        const current = currentMode || getSavedMode();
+        const isDark = ensureThemeOnBothElements(current);
+        updateToggleButtons(current, isDark);
+        // syncNativeNight(isDark); // 彻底封印：防止初始化时触发原生主题切换
+
+        // 定义主题选项
+        const themeOptions = [
+            { key: "light", name: "Classic Light", label: "浅色" },
+            { key: "dawn", name: "Dawn", label: "晨光" },
+            { key: "aqua", name: "Aqua", label: "水色" },
+            { key: "dark", name: "Dark", label: "深色" },
+            { key: "auto", name: "System", label: "跟随系统" },
+        ];
+
+        // 创建菜单 DOM
+        const menuEl = document.createElement("div");
+        menuEl.className = "v2p-theme-menu";
+
+        // 渲染菜单项
+        const renderMenu = () => {
+            const curMode = currentMode || getSavedMode();
+            menuEl.innerHTML = themeOptions
+                .map((opt) => {
+                    const isActive = curMode === opt.key;
+                    // 使用简单的 SVG 图标表示选中状态
+                    const checkIcon = isActive
+                        ? `<div class="icon" style="font-size: 16px; line-height: 1;">✓</div>`
+                        : `<div class="icon"></div>`;
+
+                    return `
+            <div class="v2p-theme-menu-item ${isActive ? "active" : ""}" data-key="${opt.key}">
+              ${checkIcon}
+              <span>${opt.label}</span>
+            </div>
+          `;
+                })
+                .join("");
+
+            // 绑定点击事件
+            menuEl.querySelectorAll(".v2p-theme-menu-item").forEach((item) => {
+                item.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const next = item.dataset.key;
+
+                    currentMode = next;
+                    localStorage.setItem(STORAGE_KEY, next);
+                    syncNativeNight(next);
+
+                    let dark = false;
+                    // 如果是 auto，需要实时计算
+                    if (next === "auto") {
+                        if (
+                            window.matchMedia &&
+                            window.matchMedia("(prefers-color-scheme: dark)").matches
+                        ) {
+                            dark = true;
+                        }
+                    } else {
+                        dark = ensureThemeOnBothElements(next);
+                    }
+
+                    // 为 auto 模式特殊处理 ensureThemeOnBothElements 中可能没有 auto 的逻辑，需要复用 ensureThemeOnBothElements(next)
+                    // 但原函数对于 'auto' 可能会回退到 'light' 或 'dark'？
+                    // 让我们看一下 ensureThemeOnBothElements 的实现：
+                    // 它里面 switch(mode) ... case 'auto': ...
+                    // 所以直接调用是安全的
+                    dark = ensureThemeOnBothElements(next);
+
+                    updateToggleButtons(next, dark);
+                    // syncNativeNight(dark); // 暂时屏蔽：用户反馈可能导致页面抖动/冲突
+
+                    // 关闭菜单
+                    menuEl.classList.remove("show");
+                    // 重新渲染以更新 active 状态
+                    renderMenu();
+                });
+            });
+        };
+
+        // 插入菜单到 DOM
+        document.body.appendChild(menuEl);
+        renderMenu();
+
+        // 使用事件委托处理点击
+        document.addEventListener(
+            "click",
+            (e) => {
+                // 1. 点击了主题切换按钮
+                // 兼容 v2p-color-mode-toggle 和 light-toggle 以及 toggle 内部的 img/svg
+                const toggleBtn =
+                    e.target.closest(TOGGLE_SELECTOR) ||
+                    e.target.closest(".light-toggle");
+
+                if (toggleBtn) {
+                    console.log("V2P: Toggle button clicked", toggleBtn);
+                    // 阻止默认跳转行为（因为 toggle 按钮通常是个 <a> 标签）
+                    e.preventDefault();
+                    // 阻止冒泡，避免触发 document 上的其他点击关闭逻辑
+                    // 但注意，我们自己在 document 上监听，所以这里的 stopPropagation 只能阻止它可以阻止的父级
+                    // 对于同级 document listener，需要靠执行顺序或逻辑判断
+                    e.stopPropagation();
+
+                    // 如果菜单已经打开，且点击的是同一个按钮（或者只是想关闭）
+                    if (menuEl.classList.contains("show")) {
+                        menuEl.classList.remove("show");
+                        return;
+                    }
+
+                    // 计算位置
+                    const rect = toggleBtn.getBoundingClientRect();
+                    const scrollTop =
+                        window.pageYOffset || document.documentElement.scrollTop;
+                    const isMobile = document.body.classList.contains("v2p-mobile");
+                    const menuHeight = 200; // 菜单大概高度
+                    const menuWidth = 160; // 菜单宽度
+
+                    let top, left;
+
+                    if (isMobile) {
+                        // 移动端：向上弹出
+                        top = rect.top - menuHeight - 5 + scrollTop;
+                        left = rect.left;
+
+                        // 如果上方空间不足，则向下弹出
+                        if (top < scrollTop + 10) {
+                            top = rect.bottom + 5 + scrollTop;
+                        }
+                    } else {
+                        // 桌面端：向下弹出，右对齐
+                        top = rect.bottom + 5 + scrollTop;
+                        left = rect.right - menuWidth;
+                    }
+
+                    // 边界检查
+                    if (left < 10) left = 10;
+                    if (left + menuWidth > document.documentElement.clientWidth) {
+                        left = document.documentElement.clientWidth - menuWidth - 10;
+                    }
+
+                    menuEl.style.top = `${top}px`;
+                    menuEl.style.left = `${left}px`;
+
+                    renderMenu();
+                    menuEl.classList.add("show");
+                    return;
+                }
+
+                // 2. 点击了菜单内的元素 -> 既然是 menuEl 的子元素，不应该关闭菜单
+                if (menuEl.contains(e.target)) {
+                    return;
+                }
+
+                // 3. 点击了页面其他区域 -> 关闭菜单
+                if (menuEl.classList.contains("show")) {
+                    menuEl.classList.remove("show");
+                }
+            },
+            true,
+        ); // 使用捕获阶段 (capture: true) 尝试优先拦截点击
+
+        // 系统主题变化时，如果是 auto，就跟着变
+        if (window.matchMedia) {
+            const mq = window.matchMedia("(prefers-color-scheme: dark)");
+            mq.addEventListener("change", () => {
+                if ((currentMode || getSavedMode()) === "auto") {
+                    const dark = ensureThemeOnBothElements("auto");
+                    updateToggleButtons("auto", dark);
+                    // syncNativeNight(dark); // 屏蔽原生同步，防止页面乱跳
+                }
+            });
+        }
+    }
+
+    // ========= 3. 尽可能早地应用主题，减少“先默认再变色”的闪一下 =========
+
+    // 初始化当前主题模式并尽可能早地应用，减少"先默认再变色"的闪烁
+    // 同步原生夜间模式状态（仅本地处理，不再发送服务端请求）
+    function syncNativeNight(mode) {
+        // 判断用户期望状态
+        let wantDark = mode === "dark";
+        if (mode === "auto") {
+            wantDark =
+                window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches;
+        }
+
+        // 1. 处理代码高亮 CSS
+        const nativeLink = document.querySelector(
+            'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+        );
+        if (nativeLink) {
+            const href = nativeLink.href || "";
+            if (!wantDark && href.includes("tomorrow-night.css")) {
+                // 用户想要浅色，替换为浅色高亮
+                nativeLink.href = href.replace("tomorrow-night.css", "tomorrow.css");
+            } else if (
+                wantDark &&
+                href.includes("tomorrow.css") &&
+                !href.includes("tomorrow-night.css")
+            ) {
+                // 用户想要深色，替换为深色高亮
+                nativeLink.href = href.replace("tomorrow.css", "tomorrow-night.css");
+            }
+        }
+
+        // 2. 同步 Wrapper 和 html 的 Night 类
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            if (wantDark) {
+                wrapper.classList.add("Night");
+                document.documentElement.classList.add("Night");
+            } else {
+                wrapper.classList.remove("Night");
+                document.documentElement.classList.remove("Night");
+            }
+        }
+
+        // 注意：不再向服务端发送 fetch 请求，避免与原生主题系统冲突导致页面抖动
+    }
+
+    currentMode = getSavedMode();
+    syncNativeNight(currentMode);
+    // 先对 html / body 打类（即使 body 还没挂上来也问题不大）
+    ensureThemeOnBothElements(currentMode);
+
+    // body 还没出现时，用 MutationObserver 再补一刀
+    if (!document.body) {
+        const mo = new MutationObserver(() => {
+            if (document.body) {
+                ensureThemeOnBothElements(currentMode);
+                mo.disconnect();
+            }
+        });
+        mo.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+        });
+    }
+
+    // 再次强制确保 document loading 完成后主题颜色正确 (防止被原生 JS 覆盖)
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => {
+            ensureThemeOnBothElements(currentMode);
+        });
+    } else {
+        ensureThemeOnBothElements(currentMode);
+    }
+
+    // ========= 4. 移动端 Tabs 横向滚动 & 位置记忆 =========
+    function initMobileTabsScroll() {
+        const body = document.body;
+        if (!body || !body.classList.contains("v2p-mobile")) return;
+
+        // Tabs 容器：兼容首页 / 其他页面
+        const tabs = document.querySelector("#Main #Tabs, #Tabs");
+        if (!tabs) return;
+
+        const STORAGE_KEY = "v2p-mobile-tabs-scroll";
+
+        // 针对不同页面生成一个 key，避免互相干扰
+        const pageKey = (() => {
+            const path = location.pathname || "/";
+            const search = location.search || "";
+            try {
+                const params = new URLSearchParams(search);
+                const tab = params.get("tab") || "";
+                // 首页 tab 列表，用 tab 名区分；其他页面用路径
+                return tab ? `home?tab=${tab}` : path;
+            } catch {
+                return path + search;
+            }
+        })();
+
+        const fullKey = `${STORAGE_KEY}:${pageKey}`;
+
+        // 恢复滚动位置或居中当前 tab
+        const restoreOrCenter = () => {
+            const saved = localStorage.getItem(fullKey);
+
+            if (saved != null) {
+                const val = Number(saved);
+                if (!Number.isNaN(val)) {
+                    tabs.scrollLeft = val;
+                    return;
+                }
+            }
+
+            // 没有保存记录时，让当前 tab 居中显示
+            const current = tabs.querySelector(".tab_current");
+            if (!current) return;
+
+            const parentRect = tabs.getBoundingClientRect();
+            const itemRect = current.getBoundingClientRect();
+            const offset =
+                itemRect.left -
+                parentRect.left -
+                (parentRect.width - itemRect.width) / 2;
+
+            tabs.scrollLeft += offset;
+        };
+
+        // 等布局完成后再滚动，避免计算不准
+        (window.requestAnimationFrame || setTimeout)(restoreOrCenter, 0);
+
+        // 监听滚动，保存位置（用 rAF 做个简单节流）
+        let ticking = false;
+        tabs.addEventListener(
+            "scroll",
+            () => {
+                if (ticking) return;
+                ticking = true;
+
+                (window.requestAnimationFrame || setTimeout)(() => {
+                    ticking = false;
+                    localStorage.setItem(fullKey, String(tabs.scrollLeft));
+                }, 16);
+            },
+            { passive: true },
+        );
+    }
+
+    // DOMReady 后再绑定按钮事件 + 监听 Wrapper 动态变化
+    function onReady(fn) {
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
+    onReady(() => {
+        bindToggleEvents();
+        initMobileTabsScroll(); // ★ 新增：初始化移动端 Tabs 横向滚动 & 记忆
+        // 监听主容器的 DOM 变化，防止部分页面局部刷新后主题类丢失
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            let reapplyScheduled = false;
+            const mo = new MutationObserver(() => {
+                // 使用 requestAnimationFrame 做简单节流，避免频繁重复执行
+                if (reapplyScheduled) return;
+                reapplyScheduled = true;
+                (window.requestAnimationFrame || setTimeout)(() => {
+                    reapplyScheduled = false;
+                    ensureThemeOnBothElements(currentMode || getSavedMode());
+                });
+            });
+            mo.observe(wrapper, {
+                childList: true,
+                subtree: true,
+            });
+        }
+    });
 })();

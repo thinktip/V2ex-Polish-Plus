@@ -1,93 +1,623 @@
 // ==UserScript==
-// @name         V2eX - Polish+
+// @name         V2EX Plus - plus
+// @namespace    https://v2ex.com/
 // @version      3.5
-// @description  V2ex Polish+
-// @author       coolpace
-// @author       2smile
-// @author       ChatGPT
-// @match        https://*.v2ex.com/*
+// @description  V2EX Plus userscript port of plus.js
 // @match        https://v2ex.com/*
-// @icon         https://v2ex.com/static/apple-touch-icon-180.png
+// @match        https://*.v2ex.com/*
 // @run-at       document-start
+// @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @icon         https://v2ex.com/static/apple-touch-icon-180.png
+// @require      https://code.jquery.com/jquery-3.7.1.min.js
+// @connect      *
 // ==/UserScript==
 
 (function () {
-    'use strict';
+  if (typeof window.chrome !== "object") {
+    window.chrome = {};
+  }
 
-    // 想要的头像尺寸，自己改，比如 48 / 64 / 96 都行
-    const TARGET_GRAVATAR_SIZE = 64;
+  if (typeof window.chrome.extension === "undefined") {
+    window.chrome.extension = {};
+  }
 
-    function upgradeAvatar(img) {
-        if (!img || !img.src) return;
+  const runtimeState = {
+    lastError: null,
+  };
 
-        let url;
+  function normalizeStorageKeys(keys) {
+    if (keys == null) return [];
+    if (Array.isArray(keys)) return keys;
+    if (typeof keys === "string") return [keys];
+    if (typeof keys === "object") return Object.keys(keys);
+    return [];
+  }
+
+  function readStoredValues(keys) {
+    const data = {};
+    for (const key of keys) {
+      data[key] = GM_getValue(key);
+    }
+    return data;
+  }
+
+  function v2pGMRequest(details) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        timeout: 30000,
+        ...details,
+        onload: (response) => resolve(response),
+        onerror: (error) => reject(error),
+        ontimeout: () => reject(new Error("Request timed out")),
+      });
+    });
+  }
+
+  class WebDAV {
+    constructor(serverUrl, username, password) {
+      this.serverUrl = serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`;
+      this.username = username;
+      this.password = password;
+      this.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+    }
+
+    async test() {
+      const response = await v2pGMRequest({
+        method: "PROPFIND",
+        url: this.serverUrl,
+        headers: {
+          Authorization: this.authHeader,
+          Depth: "0",
+        },
+      });
+      return response.status >= 200 && response.status < 300;
+    }
+
+    async get(filename) {
+      const response = await v2pGMRequest({
+        method: "GET",
+        url: this.serverUrl + filename,
+        headers: {
+          Authorization: this.authHeader,
+        },
+      });
+
+      if (response.status === 404) {
+        return null;
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error("WebDAV GET failed");
+      }
+
+      return response.responseText ? JSON.parse(response.responseText) : null;
+    }
+
+    async put(filename, data) {
+      const response = await v2pGMRequest({
+        method: "PUT",
+        url: this.serverUrl + filename,
+        headers: {
+          Authorization: this.authHeader,
+          "Content-Type": "application/json",
+        },
+        data: JSON.stringify(data),
+      });
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error("WebDAV PUT failed");
+      }
+      return true;
+    }
+  }
+
+  window.chrome.storage = window.chrome.storage || {};
+  window.chrome.storage.local = window.chrome.storage.local || {
+    get(keys, callback) {
+      callback(readStoredValues(normalizeStorageKeys(keys)));
+    },
+    set(items, callback) {
+      for (const [key, value] of Object.entries(items || {})) {
+        GM_setValue(key, value);
+      }
+      if (typeof callback === "function") {
+        callback();
+      }
+    },
+  };
+
+  window.chrome.runtime = window.chrome.runtime || {};
+  Object.defineProperty(window.chrome.runtime, "lastError", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return runtimeState.lastError;
+    },
+  });
+
+  window.chrome.runtime.sendMessage =
+    window.chrome.runtime.sendMessage ||
+    function sendMessage(message, callback) {
+      const done = (payload, error) => {
+        runtimeState.lastError = error
+          ? { message: error.message || String(error) }
+          : null;
+        if (typeof callback === "function") {
+          callback(payload);
+        }
+        runtimeState.lastError = null;
+      };
+
+      (async () => {
         try {
-            url = new URL(img.src, location.href);
-        } catch (e) {
-            // 忽略无效 URL
+          if (!message || typeof message !== "object") {
+            throw new Error("Invalid runtime message");
+          }
+
+          if (message.type === "v2p_sync_test") {
+            const client = new WebDAV(
+              message.config.url,
+              message.config.user,
+              message.config.password,
+            );
+            done({ ok: await client.test() });
             return;
-        }
+          }
 
-        const pathname = url.pathname;
-        const hostname = url.hostname;
-
-        // 1）处理 /avatar/ 路径且带 _normal 的图片
-        if (/\/avatar\//.test(pathname) && /_normal(\.\w+)$/.test(pathname)) {
-            url.pathname = pathname.replace(/_normal(\.\w+)$/, '_large$1');
-            img.src = url.toString();
+          if (message.type === "v2p_sync_push") {
+            const client = new WebDAV(
+              message.config.url,
+              message.config.user,
+              message.config.password,
+            );
+            await client.put(message.filename, message.data);
+            done({ ok: true });
             return;
+          }
+
+          if (message.type === "v2p_sync_pull") {
+            const client = new WebDAV(
+              message.config.url,
+              message.config.user,
+              message.config.password,
+            );
+            const data = await client.get(message.filename);
+            done({ ok: true, data });
+            return;
+          }
+
+          done({
+            ok: false,
+            error: `Unsupported runtime message: ${message.type}`,
+          });
+        } catch (error) {
+          done({ ok: false, error: error.message || String(error) }, error);
         }
-
-        // 2）处理 V2EX 的 gravatar 头像：通过 s=xx 控制尺寸
-        //    例如：
-        //    https://cdn.v2ex.com/gravatar/xxxx?s=24&d=retro
-        //    -> 提升到 s=48（或 TARGET_GRAVATAR_SIZE）
-        if (hostname.endsWith('v2ex.com') && /\/gravatar\//.test(pathname)) {
-            const params = url.searchParams;
-            const s = params.get('s');
-
-            if (s) {
-                const curSize = parseInt(s, 10);
-                if (!Number.isNaN(curSize) && curSize < TARGET_GRAVATAR_SIZE) {
-                    params.set('s', String(TARGET_GRAVATAR_SIZE));
-                    // URLSearchParams 是实时绑定的，不用再手动赋值 url.search
-                    img.src = url.toString();
-                }
-            }
-        }
-    }
-
-    function scanAll() {
-        document.querySelectorAll('img.avatar').forEach(upgradeAvatar);
-    }
-
-    // 首次扫描
-    scanAll();
-
-    // 监听后续动态加载的头像（比如 PJAX / AJAX）
-    const observer = new MutationObserver(mutations => {
-        for (const m of mutations) {
-            for (const node of m.addedNodes) {
-                if (node.nodeType !== 1) continue; // 只处理元素节点
-                if (node.matches && node.matches('img.avatar')) {
-                    upgradeAvatar(node);
-                }
-                if (node.querySelectorAll) {
-                    node.querySelectorAll('img.avatar').forEach(upgradeAvatar);
-                }
-            }
-        }
-    });
-
-    observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-    });
+      })();
+    };
 })();
 
+(function () {
+  /* WebDAV class removed from content script as it is now in background.js */
 
+  /**
+   * Sync Manager
+   */
+  const V2PSyncManager = {
+    STORAGE_KEY: "v2p_webdav_config",
+    SYNC_FILENAME: "v2p_sync_v1.json",
 
-"use strict";
+    async getConfig() {
+      return new Promise((resolve) => {
+        chrome.storage.local.get([this.STORAGE_KEY], (res) =>
+          resolve(res[this.STORAGE_KEY] || null),
+        );
+      });
+    },
+
+    async saveConfig(config) {
+      return new Promise((resolve) => {
+        chrome.storage.local.set({ [this.STORAGE_KEY]: config }, resolve);
+      });
+    },
+
+    async getClient() {
+      const config = await this.getConfig();
+      if (config && config.url && config.user && config.password) {
+        return new WebDAV(config.url, config.user, config.password);
+      }
+      return null;
+    },
+
+    /**
+     * Collect local data to sync
+     */
+    getLocalData() {
+      const navConfig = null; // Will be handled by chrome.storage logic
+      const themeMode = localStorage.getItem("user_preferred_theme_mode");
+      const sidebarOrder = localStorage.getItem("v2p_sidebar_order");
+      const navCollapsed = localStorage.getItem("v2p_nav_collapsed");
+
+      return {
+        themeMode,
+        sidebarOrder,
+        navCollapsed,
+        updatedAt: Date.now(),
+      };
+    },
+
+    async push() {
+      const config = await this.getConfig();
+      if (!config) throw new Error("未配置 WebDAV");
+
+      const localData = this.getLocalData();
+      const navConfig = await new Promise((r) =>
+        chrome.storage.local.get(["v2p_nav_config"], (res) =>
+          r(res["v2p_nav_config"]),
+        ),
+      );
+      localData.navConfig = navConfig;
+
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: "v2p_sync_push",
+            config,
+            filename: this.SYNC_FILENAME,
+            data: localData,
+          },
+          (res) => {
+            if (chrome.runtime.lastError)
+              return reject(new Error(chrome.runtime.lastError.message));
+            if (res && res.ok) resolve(true);
+            else reject(new Error((res && res.error) || "推送失败"));
+          },
+        );
+      });
+    },
+
+    async pull() {
+      const config = await this.getConfig();
+      if (!config) throw new Error("未配置 WebDAV");
+
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: "v2p_sync_pull",
+            config,
+            filename: this.SYNC_FILENAME,
+          },
+          (res) => {
+            if (chrome.runtime.lastError)
+              return reject(new Error(chrome.runtime.lastError.message));
+            if (res && res.ok) {
+              const remoteData = res.data;
+              if (remoteData) {
+                if (remoteData.themeMode)
+                  localStorage.setItem(
+                    "user_preferred_theme_mode",
+                    remoteData.themeMode,
+                  );
+                if (remoteData.sidebarOrder)
+                  localStorage.setItem(
+                    "v2p_sidebar_order",
+                    remoteData.sidebarOrder,
+                  );
+                if (remoteData.navCollapsed)
+                  localStorage.setItem(
+                    "v2p_nav_collapsed",
+                    remoteData.navCollapsed,
+                  );
+                if (remoteData.navConfig) {
+                  chrome.storage.local.set({
+                    v2p_nav_config: remoteData.navConfig,
+                  });
+                }
+                resolve(true);
+              } else {
+                reject(new Error("云端文件为空"));
+              }
+            } else {
+              reject(new Error((res && res.error) || "拉取失败"));
+            }
+          },
+        );
+      });
+    },
+
+    async testConnection(config) {
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "v2p_sync_test", config }, (res) => {
+          if (chrome.runtime.lastError)
+            return reject(new Error(chrome.runtime.lastError.message));
+          if (res && res.ok) resolve(true);
+          else reject(new Error((res && res.error) || "连接失败"));
+        });
+      });
+    },
+  };
+
+  window.V2PSyncManager = V2PSyncManager;
+
+  const v2pShowToast = (message, duration = 3000) => {
+    const existing = document.querySelector(".v2p-toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.className = "v2p-toast";
+    toast.textContent = message;
+    const append = () => {
+      document.body.appendChild(toast);
+      if (duration !== 0) {
+        setTimeout(() => toast.remove(), duration);
+      }
+    };
+    if (document.body) {
+      append();
+    } else {
+      const wait = () => {
+        if (document.body) return append();
+        requestAnimationFrame(wait);
+      };
+      wait();
+    }
+  };
+  window.v2pShowToast = v2pShowToast;
+
+  // 前台自动签到
+  const CHECKIN_DATE_KEY = "v2p_checkin_date";
+  const CHECKIN_USER_KEY = "v2p_checkin_user";
+  let checking = false;
+
+  const getUserName = () => {
+    const link = document.querySelector('#Top .tools a[href^="/member/"]');
+    return link ? link.textContent.trim() : null;
+  };
+
+  const alreadyCheckedToday = (username) => {
+    if (!username) return false;
+    const today = new Date().toISOString().split("T")[0];
+    return (
+      localStorage.getItem(CHECKIN_DATE_KEY) === today &&
+      localStorage.getItem(CHECKIN_USER_KEY) === username
+    );
+  };
+
+  const markCheckedToday = (username) => {
+    const today = new Date().toISOString().split("T")[0];
+    localStorage.setItem(CHECKIN_DATE_KEY, today);
+    localStorage.setItem(CHECKIN_USER_KEY, username || "");
+  };
+
+  const extractRedeemUrl = (html) => {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const btn = doc.querySelector('input[value^="领取"]');
+    if (btn) {
+      const onclick = btn.getAttribute("onclick") || "";
+      const match = onclick.match(/'(\/mission\/daily\/redeem\?once=\d+)'/);
+      if (match && match[1]) return match[1];
+    }
+    const match = html.match(/\/mission\/daily\/redeem\?once=\d+/);
+    return match ? match[0] : null;
+  };
+
+  const parseDays = (html) => {
+    const match = html.match(/已连续登[^0-9]*?(\d+)\s*天/);
+    return match ? match[1] : null;
+  };
+
+  const parseCoins = (html) => {
+    const match = html.match(/每日登录奖励\s*(\d+)\s*铜币/);
+    return match ? match[1] : null;
+  };
+
+  const runCheckin = async () => {
+    if (checking) return;
+    const username = getUserName();
+    if (!username) return;
+    if (alreadyCheckedToday(username)) return;
+    checking = true;
+    try {
+      const dailyHtml = await fetch("/mission/daily", {
+        credentials: "include",
+      }).then((r) => r.text());
+      if (!dailyHtml.includes("/signout")) {
+        checking = false;
+        return;
+      }
+      if (
+        dailyHtml.includes("每日登录奖励已领取") ||
+        dailyHtml.includes("已领取")
+      ) {
+        markCheckedToday(username);
+        checking = false;
+        return;
+      }
+      const redeemUrl = extractRedeemUrl(dailyHtml);
+      if (!redeemUrl) {
+        checking = false;
+        return;
+      }
+      const redeemHtml = await fetch(redeemUrl, {
+        credentials: "include",
+      }).then((r) => r.text());
+      const days = parseDays(redeemHtml);
+      markCheckedToday(username);
+
+      let message = "签到成功 · 今日登录奖励已领取";
+      try {
+        const balanceHtml = await fetch("/balance", {
+          credentials: "include",
+        }).then((r) => r.text());
+        const coins = parseCoins(balanceHtml);
+        if (days && coins) message = `连续签到 ${days} 天，本次 ${coins} 铜币`;
+        else if (coins) message = `签到成功 · 本次 ${coins} 铜币`;
+      } catch (e) {}
+
+      v2pShowToast(message);
+    } catch (e) {
+      console.log("V2P: Front-end checkin error", e);
+    } finally {
+      checking = false;
+    }
+  };
+
+  const scheduleCheckin = () => {
+    let retries = 0;
+    const tryRun = () => {
+      if (getUserName()) {
+        runCheckin();
+        return;
+      }
+      retries += 1;
+      if (retries < 10) setTimeout(tryRun, 300);
+    };
+    tryRun();
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleCheckin);
+  } else {
+    scheduleCheckin();
+  }
+  ("use strict");
+
+  // 想要的头像尺寸上限，自己改，比如 48 / 64 / 96 都行
+  const MAX_GRAVATAR_SIZE = 64;
+
+  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+  function getDesiredAvatarSize(img) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = img.clientWidth || 0;
+    const h = img.clientHeight || 0;
+    const base = Math.max(w, h);
+    if (base > 0) {
+      return clamp(Math.ceil(base * dpr), 32, MAX_GRAVATAR_SIZE);
+    }
+    return MAX_GRAVATAR_SIZE;
+  }
+
+  function upgradeAvatar(img) {
+    // 1. 基础检查：必须是图片元素且有 src
+    if (!img || !img.src) return;
+
+    // 2. 防重复处理检查
+    if (img.dataset.v2pProcessed) return;
+
+    // 3. 快速字符串检查，避免不必要的 URL 对象创建
+    // V2EX 头像通常包含 /avatar/ 或 /gravatar/
+    const src = img.src;
+    if (!src.includes("/avatar/") && !src.includes("/gravatar/")) {
+      return;
+    }
+
+    // 标记为已处理，避免重复计算
+    img.dataset.v2pProcessed = "true";
+
+    let url;
+    try {
+      url = new URL(src, location.href);
+    } catch (e) {
+      return;
+    }
+
+    const pathname = url.pathname;
+    const hostname = url.hostname;
+
+    // 4. 处理逻辑
+    // Case A: /avatar/ 路径且带 _normal 的图片 -> 视显示尺寸决定是否升级
+    if (pathname.includes("/avatar/") && pathname.includes("_normal")) {
+      const desired = getDesiredAvatarSize(img);
+      if (desired >= 48) {
+        // 使用字符串替换比正则稍快，且对于这种固定格式足够安全
+        img.src = src.replace("_normal", "_large");
+      }
+      return;
+    }
+
+    // Case B: V2EX 的 gravatar 头像：通过 s=xx 控制尺寸
+    if (hostname.endsWith("v2ex.com") && pathname.includes("/gravatar/")) {
+      const params = url.searchParams;
+      const s = params.get("s");
+
+      if (s) {
+        const curSize = parseInt(s, 10);
+        const desired = getDesiredAvatarSize(img);
+        if (!Number.isNaN(curSize) && curSize < desired) {
+          params.set("s", String(desired));
+          img.src = url.toString();
+        }
+      }
+    }
+  }
+
+  function scanAll() {
+    document.querySelectorAll("img.avatar").forEach(scheduleUpgrade);
+  }
+
+  const idle =
+    window.requestIdleCallback ||
+    function (cb) {
+      return setTimeout(cb, 16);
+    };
+
+  const io =
+    "IntersectionObserver" in window
+      ? new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              io.unobserve(entry.target);
+              idle(() => upgradeAvatar(entry.target));
+            }
+          });
+        })
+      : null;
+
+  function scheduleUpgrade(img) {
+    if (io) {
+      io.observe(img);
+    } else {
+      idle(() => upgradeAvatar(img));
+    }
+  }
+
+  // 首次扫描
+  scanAll();
+
+  // 监听后续动态加载的头像（比如 PJAX / AJAX）
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.addedNodes.length === 0) continue;
+
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue; // 只处理元素节点
+
+        // 检查节点本身
+        if (node.tagName === "IMG" && node.classList.contains("avatar")) {
+          scheduleUpgrade(node);
+        }
+
+        // 检查子节点 (如果插入的是一个容器)
+        if (node.querySelectorAll) {
+          // 使用更具体的选择器，减少遍历范围
+          const avatars = node.querySelectorAll("img.avatar");
+          if (avatars.length > 0) {
+            avatars.forEach(scheduleUpgrade);
+          }
+        }
+      }
+    }
+  });
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+})();
+
+("use strict");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) =>
@@ -713,7 +1243,7 @@ function getStorage(useCache = true) {
         window.__V2P_StorageCache = data;
       }
       resolve(data);
-    } 
+    }
   });
 }
 function getStorageSync() {
@@ -813,7 +1343,7 @@ var init_globals = __esm({
     $topicContentBox = $("#Main .box:has(.topic_buttons)");
     if ($topicContentBox.length === 0) {
       // 移动端 / 特殊布局兜底：不依赖 #Main
-      $topicContentBox = $('.box:has(.topic_buttons)');
+      $topicContentBox = $(".box:has(.topic_buttons)");
     }
     $topicHeader = $topicContentBox.find(".header");
 
@@ -1292,6 +1822,92 @@ var init_twitter = __esm({
   },
 });
 
+// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/image.js
+var Image;
+var init_image = __esm({
+  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/image.js"() {
+    "use strict";
+    init_defaultAttributes();
+    Image = [
+      "svg",
+      defaultAttributes,
+      [
+        [
+          "rect",
+          { width: "18", height: "18", x: "3", y: "3", rx: "2", ry: "2" },
+        ],
+        ["circle", { cx: "8.5", cy: "8.5", r: "1.5" }],
+        ["polyline", { points: "21 15 16 10 5 21" }],
+      ],
+    ];
+  },
+});
+
+// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/file-text.js
+var FileText;
+var init_file_text = __esm({
+  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/file-text.js"() {
+    "use strict";
+    init_defaultAttributes();
+    FileText = [
+      "svg",
+      defaultAttributes,
+      [
+        [
+          "path",
+          {
+            d: "M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z",
+          },
+        ],
+        ["polyline", { points: "14 2 14 8 20 8" }],
+        ["line", { x1: "16", x2: "8", y1: "13", y2: "13" }],
+        ["line", { x1: "16", x2: "8", y1: "17", y2: "17" }],
+        ["line", { x1: "10", x2: "8", y1: "9", y2: "9" }],
+      ],
+    ];
+  },
+});
+
+// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/globe.js
+var Globe;
+var init_globe = __esm({
+  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/globe.js"() {
+    "use strict";
+    init_defaultAttributes();
+    Globe = [
+      "svg",
+      defaultAttributes,
+      [
+        ["circle", { cx: "12", cy: "12", r: "10" }],
+        ["line", { x1: "2", x2: "22", y1: "12", y2: "12" }],
+        [
+          "path",
+          {
+            d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z",
+          },
+        ],
+      ],
+    ];
+  },
+});
+
+// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/clock.js
+var Clock;
+var init_clock = __esm({
+  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/clock.js"() {
+    "use strict";
+    init_defaultAttributes();
+    Clock = [
+      "svg",
+      defaultAttributes,
+      [
+        ["circle", { cx: "12", cy: "12", r: "10" }],
+        ["polyline", { points: "12 6 12 12 16 14" }],
+      ],
+    ];
+  },
+});
+
 // node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/lucide.js
 var createIcons;
 var init_lucide = __esm({
@@ -1316,6 +1932,10 @@ var init_lucide = __esm({
     init_star();
     init_sun();
     init_twitter();
+    init_image();
+    init_file_text();
+    init_globe();
+    init_clock();
     createIcons = ({
       icons = {},
       nameAttr = "data-lucide",
@@ -1531,6 +2151,10 @@ function loadIcons() {
         ChevronDown,
         ArrowUpRightSquare: SquareArrowUpRight,
         House,
+        Image,
+        FileText,
+        Globe,
+        Clock,
       },
     });
   }, 0);
@@ -1548,15 +2172,6 @@ function transformEmoji(textValue) {
 }
 function getTagsText(tags) {
   return tags.map((it) => it.name).join("\uFF0C");
-}
-function setTheme(type) {
-  // Theme application is now handled entirely by v2p.theme.js userscript.
-  // This stub is kept only for backward compatibility.
-}
-
-function toggleTheme({ $toggle, prefersDark, themeType = "light-default" }) {
-  // Theme switching (classes, colors, icons) is now fully handled by v2p.theme.js.
-  // This function is kept as a no-op so that existing calls in v2p.js do not break.
 }
 
 function replaceEmojiWithHD($emojiImgs) {
@@ -1627,6 +2242,70 @@ var init_common = __esm({
       const isBrowserExt = isBrowserExtension();
       const storage = await getStorage();
       const options = storage["options" /* Options */];
+      // ==================== 开始添加自动签到逻辑 ====================
+
+      if (options.autoCheckIn.enabled) {
+        const dailyUrl = "/mission/daily";
+        const giftLinkSelector = 'a[href="/mission/daily"]';
+        const giftLink = document.querySelector(giftLinkSelector);
+
+        // 如果在当前页面找到了“领取今日的登录奖励”链接
+        if (
+          giftLink &&
+          (giftLink.innerText.includes("领取今日的登录奖励") ||
+            giftLink.closest(".box")?.querySelector(".fa-gift"))
+        ) {
+          // 使用 AJAX 静默签到
+          (async () => {
+            try {
+              // 1. 获取签到页面内容以提取 once token
+              const resDict = await fetch(dailyUrl);
+              const htmlText = await resDict.text();
+
+              // 2. 解析签到按钮的 URL
+              // 支持单引号和双引号，以及不严格的空格
+              const match = htmlText.match(
+                /location\.href\s*=\s*['"]([^'"]+)['"]/,
+              );
+              if (match && match[1]) {
+                const redeemUrl = match[1];
+                // CRITICAL: 必须校验 URL 是否包含了 redeem 关键字，否则可能误抓取到“登出”链接 (/signout)
+                if (redeemUrl.includes("/mission/daily/redeem")) {
+                  // 3. 发送签到请求
+                  const redeemRes = await fetch(redeemUrl);
+                  if (redeemRes.ok) {
+                    // 4. 签到成功，提示用户并移除链接
+                    createToast({
+                      message: "✅ V2EX Polish+: 已自动领取今日登录奖励",
+                    });
+
+                    // 移除顶部的签到提示
+                    const tipBox = giftLink.closest(".box");
+                    if (tipBox) {
+                      tipBox.remove();
+                    }
+
+                    // 如果是在签到页面，尝试刷新一下状态或按钮
+                    if (window.location.pathname === dailyUrl) {
+                      const redeemBtn =
+                        document.querySelector('input[value^="领取"]');
+                      if (redeemBtn) {
+                        redeemBtn.value = "已领取";
+                        redeemBtn.disabled = true;
+                      }
+                    }
+                  }
+                } // end if (redeemUrl.includes)
+              } // end if (match)
+            } catch (err) {
+              console.error("自动签到失败:", err);
+            }
+          })();
+        }
+      }
+      // ==================== 自动签到逻辑结束 ====================
+      // ==================== 自动签到逻辑结束 ====================
+
       if (options.theme.mode === "compact") {
         $body.addClass("v2p-mode-compact");
       }
@@ -1650,7 +2329,6 @@ var init_common = __esm({
               const remoteSyncInfo = settings?.["settings-sync" /* SyncInfo */];
               if (settings && remoteSyncInfo) {
                 if (syncInfo.version < remoteSyncInfo.version || neverChecked) {
-                
                 }
               }
             });
@@ -2311,7 +2989,6 @@ var init_dom = __esm({
   },
 });
 
-
 var invalidTemplate, topicDataCache;
 var init_use_topic_preview = __esm({
   "src/use-topic-preview.ts"() {
@@ -2350,7 +3027,6 @@ var init_use_topic_preview = __esm({
   },
 });
 
-
 var init_topic_list = __esm({
   "src/contents/home/topic-list.ts"() {
     "use strict";
@@ -2373,57 +3049,330 @@ var init_home = __esm({
     init_globals();
     init_helpers();
     init_topic_list();
-      function handleNodeNavToggle() {
-  // 1. 查找包含“节点导航”文本的标题区域
-  // 这里的筛选逻辑是为了确保只定位到正确的那个 box
-  const $headerSpan = $('.box .cell span.fade').filter((_, el) => {
-    return $(el).text().includes('节点导航');
-  });
+    function handleNodeNavToggle() {
+      // 1. 查找包含“节点导航”文本的标题区域
+      // 这里的筛选逻辑是为了确保只定位到正确的那个 box
+      const $headerSpan = $(".box .cell span.fade").filter((_, el) => {
+        return $(el).text().includes("节点导航");
+      });
 
-  if ($headerSpan.length === 0) return;
+      if ($headerSpan.length === 0) return;
 
-  // 2. 获取容器和需要折叠的内容
-  // 逻辑：找到父级 .box，然后选取除了第一个子元素（标题栏）以外的所有子元素
-  const $box = $headerSpan.closest('.box');
-  const $content = $box.children().not(':first-child');
+      // 2. 获取容器和需要折叠的内容
+      // 逻辑：找到父级 .box，然后选取除了第一个子元素（标题栏）以外的所有子元素
+      const $box = $headerSpan.closest(".box");
+      const $headerCell = $headerSpan.closest(".cell");
+      const $content = $box.children().not(":first-child");
 
-  // 3. 定义存储 Key
-  const STORAGE_KEY = 'v2p_nav_collapsed';
+      // 3. 定义存储 Key
+      const STORAGE_KEY = "v2p_nav_collapsed";
 
-  // 4. 创建切换按钮
-  // 使用 v2p-hover-btn 类以保持样式一致，行内样式微调位置
-  const $toggleBtn = $('<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; font-size: 12px; text-decoration: none;"></a>');
+      // 4. 创建切换按钮
+      // 使用 v2p-hover-btn 类以保持样式一致，行内样式微调位置
+      const $toggleBtn = $(
+        '<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; display: inline-flex; justify-content: center; align-items: center; color: #ccc; vertical-align: text-bottom;"></a>',
+      );
 
-  // 5. 定义切换状态的逻辑
-  const applyState = (isCollapsed) => {
-    if (isCollapsed) {
-      $content.hide();
-      $toggleBtn.text('[展开]');
-      // 稍微减小 box 的下边距，折叠后看起来更紧凑
-      $box.css('margin-bottom', '10px');
-    } else {
-      $content.show();
-      $toggleBtn.text('[收起]');
-      $box.css('margin-bottom', '');
+      const icons = {
+        arrowUp:
+          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+        arrowDown:
+          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+      };
+
+      // 5. 定义切换状态的逻辑
+      const applyState = (isCollapsed) => {
+        if (isCollapsed) {
+          $content.hide();
+          $toggleBtn.html(icons.arrowDown); // 折叠状态显示“向下展开”
+          // 稍微减小 box 的下边距，折叠后看起来更紧凑
+          $box.css("margin-bottom", "10px");
+          $headerCell.css("border-bottom", "none");
+        } else {
+          $content.show();
+          $toggleBtn.html(icons.arrowUp); // 展开状态显示“向上收起”
+          $box.css("margin-bottom", "");
+          $headerCell.css("border-bottom", "");
+        }
+        // 存储状态：'1' 为折叠，'0' 为展开
+        localStorage.setItem(STORAGE_KEY, isCollapsed ? "1" : "0");
+      };
+
+      // 6. 绑定点击事件
+      $toggleBtn.on("click", function () {
+        const isContentVisible = $content.is(":visible");
+        // 如果当前内容可见，则点击意图是折叠 (isCollapsed = true)
+        applyState(isContentVisible);
+      });
+
+      // 7. 初始化：读取存储的状态并应用
+      const savedState = localStorage.getItem(STORAGE_KEY) === "1";
+      applyState(savedState);
+
+      // 8. 将按钮插入到“节点导航”文字后面
+      $headerSpan.append($toggleBtn);
     }
-    // 存储状态：'1' 为折叠，'0' 为展开
-    localStorage.setItem(STORAGE_KEY, isCollapsed ? '1' : '0');
-  };
 
-  // 6. 绑定点击事件
-  $toggleBtn.on('click', function() {
-    const currentText = $(this).text();
-    const isNowCollapsed = currentText === '[收起]'; // 如果当前是[收起]，点击后就变成折叠
-    applyState(isNowCollapsed);
-  });
+    // 通用的右侧边栏区域折叠功能
+    function handleSidebarSectionToggle(sectionTitle, storageKey) {
+      // 1. 查找包含指定文本的标题区域
+      const $headerSpan = $(
+        "#Rightbar .box .cell span.fade, #Rightbar .box .inner span.fade, #Rightbar .box .inner span.f12.gray, #Rightbar .box .cell span.f12.gray",
+      ).filter((_, el) => {
+        return $(el).text().trim() === sectionTitle;
+      });
 
-  // 7. 初始化：读取存储的状态并应用
-  const savedState = localStorage.getItem(STORAGE_KEY) === '1';
-  applyState(savedState);
+      if ($headerSpan.length === 0) return;
 
-  // 8. 将按钮插入到“节点导航”文字后面
-  $headerSpan.append($toggleBtn);
-}
+      // 如果是"我收藏的节点"，将字体样式改为和其他栏一致的 fade 类
+      if (sectionTitle === "我收藏的节点") {
+        $headerSpan.removeClass("f12 gray").addClass("fade");
+      }
+
+      // 2. 获取容器和需要折叠的内容
+      const $box = $headerSpan.closest(".box");
+      const $headerContainer = $headerSpan.closest(".cell, .inner");
+      const $content = $box.children().not($headerContainer);
+
+      // 标记为可排序区块
+      $box.attr("data-v2p-sortable", sectionTitle);
+
+      // 3. 创建切换按钮
+      const $toggleBtn = $(
+        '<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; display: inline-flex; justify-content: center; align-items: center; color: #ccc; vertical-align: text-bottom;"></a>',
+      );
+
+      const icons = {
+        arrowUp:
+          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+        arrowDown:
+          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+      };
+
+      // 4. 定义切换状态的逻辑
+      const applyState = (isCollapsed) => {
+        if (isCollapsed) {
+          $content.hide();
+          $toggleBtn.html(icons.arrowDown);
+          $box.css("margin-bottom", "10px");
+          $headerContainer.css("border-bottom", "none");
+        } else {
+          $content.show();
+          $toggleBtn.html(icons.arrowUp);
+          $box.css("margin-bottom", "");
+          $headerContainer.css("border-bottom", "");
+        }
+        localStorage.setItem(storageKey, isCollapsed ? "1" : "0");
+      };
+
+      // 5. 绑定点击事件
+      $toggleBtn.on("click", function () {
+        const isContentVisible = $content.is(":visible");
+        applyState(isContentVisible);
+      });
+
+      // 6. 初始化：读取存储的状态并应用
+      const savedState = localStorage.getItem(storageKey) === "1";
+      applyState(savedState);
+
+      // 7. 将按钮插入到标题文字后面
+      $headerSpan.append($toggleBtn);
+    }
+
+    // 右侧边栏拖拽排序功能
+    function handleSidebarDragSort() {
+      const STORAGE_KEY = "v2p_sidebar_order";
+      const $sortableBoxes = $("#Rightbar [data-v2p-sortable]");
+      if ($sortableBoxes.length < 2) return;
+
+      // 添加拖拽相关 CSS
+      $("<style>")
+        .text(
+          "[data-v2p-sortable].v2p-drag-over-top { box-shadow: 0 -2px 0 0 var(--v2p-color-accent, #4a90d9) !important; }" +
+            "[data-v2p-sortable].v2p-drag-over-bottom { box-shadow: 0 2px 0 0 var(--v2p-color-accent, #4a90d9) !important; }" +
+            ".v2p-drag-handle:hover { opacity: 0.7 !important; }" +
+            "[data-v2p-sortable].v2p-dragging { opacity: 0.4; transition: opacity 0.15s; }",
+        )
+        .appendTo("head");
+
+      // 在每个可排序 box 前插入位置标记（用于记忆原始位置）
+      const slots = [];
+      $sortableBoxes.each((_, box) => {
+        const $slot = $(
+          '<span class="v2p-sort-slot" style="display:none;"></span>',
+        );
+        $(box).before($slot);
+        slots.push($slot[0]);
+      });
+
+      // 为每个可排序区块的标题添加拖拽手柄
+      $sortableBoxes.each((_, box) => {
+        const $box = $(box);
+        const $header = $box.children(".cell, .inner").first();
+        const $fadeSpan = $header.find("span.fade").first();
+        const $dragHandle = $(
+          '<span class="v2p-drag-handle" style="cursor: grab; display: inline-flex; align-items: center; margin-right: 4px; opacity: 0.3; vertical-align: text-bottom;" title="拖拽排序">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>' +
+            '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>' +
+            '<circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>' +
+            "</svg>" +
+            "</span>",
+        );
+        $fadeSpan.before($dragHandle);
+
+        // 只有从拖拽手柄按下时才允许拖拽
+        $dragHandle.on("mousedown", function () {
+          $box.attr("draggable", "true");
+        });
+      });
+
+      // 全局 mouseup 取消 draggable 状态
+      $(document).on("mouseup", function () {
+        $sortableBoxes.removeAttr("draggable");
+      });
+
+      // HTML5 Drag and Drop 事件设置
+      let dragSrcBox = null;
+
+      $sortableBoxes.each((_, box) => {
+        box.addEventListener("dragstart", function (e) {
+          dragSrcBox = box;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", "");
+          setTimeout(() => {
+            box.classList.add("v2p-dragging");
+          }, 0);
+        });
+
+        box.addEventListener("dragend", function () {
+          box.classList.remove("v2p-dragging");
+          $("[data-v2p-sortable]").removeClass(
+            "v2p-drag-over-top v2p-drag-over-bottom",
+          );
+          box.removeAttribute("draggable");
+          dragSrcBox = null;
+        });
+
+        box.addEventListener("dragover", function (e) {
+          if (!dragSrcBox || dragSrcBox === box) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+
+          const rect = box.getBoundingClientRect();
+          const midY = rect.top + rect.height / 2;
+          const $box = $(box);
+          $box.removeClass("v2p-drag-over-top v2p-drag-over-bottom");
+          if (e.clientY < midY) {
+            $box.addClass("v2p-drag-over-top");
+          } else {
+            $box.addClass("v2p-drag-over-bottom");
+          }
+        });
+
+        box.addEventListener("dragleave", function () {
+          $(box).removeClass("v2p-drag-over-top v2p-drag-over-bottom");
+        });
+
+        box.addEventListener("drop", function (e) {
+          e.stopPropagation();
+          e.preventDefault();
+          if (!dragSrcBox || dragSrcBox === box) return;
+
+          // 获取当前 DOM 排列顺序
+          const currentOrder = [];
+          $("#Rightbar [data-v2p-sortable]").each((_, b) => {
+            currentOrder.push($(b).attr("data-v2p-sortable"));
+          });
+
+          const srcId = $(dragSrcBox).attr("data-v2p-sortable");
+          const targetId = $(box).attr("data-v2p-sortable");
+
+          // 从当前顺序中移除被拖拽的项
+          const srcIdx = currentOrder.indexOf(srcId);
+          currentOrder.splice(srcIdx, 1);
+
+          // 确定插入位置（目标的上方或下方）
+          let targetIdx = currentOrder.indexOf(targetId);
+          const rect = box.getBoundingClientRect();
+          if (e.clientY >= rect.top + rect.height / 2) {
+            targetIdx += 1;
+          }
+          currentOrder.splice(targetIdx, 0, srcId);
+
+          // 应用新顺序并保存
+          applyOrder(currentOrder);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(currentOrder));
+
+          $("[data-v2p-sortable]").removeClass(
+            "v2p-drag-over-top v2p-drag-over-bottom",
+          );
+        });
+      });
+
+      // 应用指定顺序到 DOM
+      function applyOrder(newOrder) {
+        // 先将所有可排序 box 及其后面的 sep20 从 DOM 中卸载
+        const detached = {};
+        newOrder.forEach((id) => {
+          const $box = $(`#Rightbar [data-v2p-sortable="${id}"]`);
+          const $sep = $box.next(".sep20");
+          detached[id] = { $box, $sep };
+          $sep.detach();
+          $box.detach();
+        });
+
+        // 按新顺序重新插入到各个位置标记后面
+        newOrder.forEach((id, idx) => {
+          const { $box, $sep } = detached[id];
+          $(slots[idx]).after($box);
+          $box.after($sep);
+        });
+      }
+
+      // 恢复保存的排列顺序
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const order = JSON.parse(saved);
+          const existing = new Set();
+          $sortableBoxes.each((_, box) =>
+            existing.add($(box).attr("data-v2p-sortable")),
+          );
+          if (
+            order.length === existing.size &&
+            order.every((id) => existing.has(id))
+          ) {
+            applyOrder(order);
+          }
+        } catch (e) {
+          /* 忽略无效的保存数据 */
+        }
+      }
+    }
+
+    // 将"创作新主题"合并到用户信息卡片中
+    function mergeCreateTopicToUserCard() {
+      // 查找用户信息卡片（包含 #member-activity）
+      const $userCard = $("#member-activity").closest(".box");
+      if ($userCard.length === 0) return;
+
+      // 查找"创作新主题"区块（通过 /write 链接识别）
+      const $writeLink = $('#Rightbar a[href="/write"]').first();
+      if ($writeLink.length === 0) return;
+
+      const $writeBox = $writeLink.closest(".box");
+      if ($writeBox.length === 0 || $writeBox[0] === $userCard[0]) return;
+
+      // 获取"创作新主题"的 cell 并移到用户卡片末尾
+      const $writeCell = $writeLink.closest(".cell");
+      $userCard.append($writeCell);
+
+      // 移除空的原 box 及其前面的分隔符
+      $writeBox.prev(".sep").remove();
+      $writeBox.remove();
+    }
+
     void (async () => {
       const storage = await getStorage();
       const options = storage["options" /* Options */];
@@ -2436,6 +3385,31 @@ var init_home = __esm({
         }
       }
       handleNodeNavToggle();
+
+      // 将"创作新主题"合并到用户信息卡片
+      mergeCreateTopicToUserCard();
+
+      // 为右侧边栏的各个区域添加折叠功能
+      handleSidebarSectionToggle(
+        "我收藏的节点",
+        "v2p_sidebar_fav_nodes_collapsed",
+      );
+      handleSidebarSectionToggle(
+        "今日热议主题",
+        "v2p_sidebar_hot_topics_collapsed",
+      );
+      handleSidebarSectionToggle("最热节点", "v2p_sidebar_hot_nodes_collapsed");
+      handleSidebarSectionToggle(
+        "最近新增节点",
+        "v2p_sidebar_new_nodes_collapsed",
+      );
+      handleSidebarSectionToggle(
+        "社区运行状况",
+        "v2p_sidebar_community_status_collapsed",
+      );
+
+      // 为右侧边栏添加拖拽排序功能
+      handleSidebarDragSort();
 
       loadIcons();
     })();
@@ -3890,7 +4864,7 @@ function processAvatar(params) {
       </div>
     `);
     popupControl2.$content.empty().append($content);
-    
+
     void (async () => {
       if (!memberDataCache.has(memberName)) {
         abortController = new AbortController();
@@ -3982,8 +4956,7 @@ var init_avatar = __esm({
 });
 
 // src/contents/topic/comment.ts
-function handleFilteredComments() {
-}
+function handleFilteredComments() {}
 function processActions($cellDom, data) {
   const $actions = $cellDom.find(
     "> table > tbody > tr > td:last-of-type > .fr",
@@ -4013,18 +4986,18 @@ function processActions($cellDom, data) {
     $thankIcon.addClass("v2p-hover-btn").replaceAll($thank);
     $controls.append($hide).append($thankIcon);
   }
-const $reply = $actions.find("a:last-of-type");
-// 删除原来的图标 / 文本
-$reply.empty();
-// 插入统一风格的按钮
-$reply.append(
-  `<span class="v2p-control v2p-hover-btn v2p-control-reply">
+  const $reply = $actions.find("a:last-of-type");
+  // 删除原来的图标 / 文本
+  $reply.empty();
+  // 插入统一风格的按钮
+  $reply.append(
+    `<span class="v2p-control v2p-hover-btn v2p-control-reply">
       <i data-lucide="message-square"></i>
    </span>`,
-);
-$controls.append($reply);
+  );
+  $controls.append($reply);
 
-    thankArea.remove();
+  thankArea.remove();
   const floorNum = $actions.find(".no").clone();
 
   $reply.on("click", () => {
@@ -4192,7 +5165,7 @@ async function handleComments() {
         }
       }
     });
-   
+
     updateCommentCells();
 
     $(".v2p-control-thank").on("click", (ev) => {
@@ -4289,7 +5262,6 @@ async function handleComments() {
   }
   window.requestIdleCallback(() => {
     replaceCommentEmojiWithHD();
-    handleLinkPreview();
   });
 }
 var commentDataList, popupControl;
@@ -4318,7 +5290,6 @@ var init_comment = __esm({
   },
 });
 
-
 var $layoutToggle,
   iconLayoutV,
   iconLayoutH,
@@ -4337,7 +5308,6 @@ var init_layout = __esm({
     iconLayoutH = createElement$1(PanelRight);
     iconLayoutH.setAttribute("width", "100%");
     iconLayoutH.setAttribute("height", "100%");
-
   },
 });
 
@@ -4525,7 +5495,9 @@ function handleReplyActions() {
       root: $replyBox,
       trigger: $emojiBtn,
       content: $emojiContent,
-      options: { placement: "right-end" },
+      options: {
+        placement: $body.hasClass("v2p-mobile") ? "bottom" : "right-end",
+      },
       onOpen: () => {
         $body.on("keydown", keyupHandler);
       },
@@ -4932,47 +5904,6 @@ function patternToRegex(...matchPatterns) {
   return new RegExp(matchPatterns.map((x) => getRawPatternRegex(x)).join("|"));
 }
 
-// 添加拼车节点导航
-
-function addPincheTab() {
-  // 选择所有导航栏容器
-  const tabsContainers = document.querySelectorAll("#Tabs");
-
-  tabsContainers.forEach((container) => {
-    // 查找“Apple”标签
-    const appleTab = container.querySelector('a[href="/?tab=apple"]');
-
-    if (appleTab) {
-      // 检查是否已经添加过“拼车”标签，避免重复
-      const existingPincheTab = container.querySelector('a[href="/go/cosub"]');
-      if (!existingPincheTab) {
-        // 创建新的“拼车”标签
-        const pincheTab = document.createElement("a");
-        pincheTab.href = "/go/cosub";
-        pincheTab.className = "tab v2p-hover-btn";
-        pincheTab.textContent = "拼车";
-
-        // 插入到“Apple”标签之后
-        appleTab.insertAdjacentElement("afterend", pincheTab);
-      }
-    }
-  });
-}
-
-// 监听DOM变化，确保在动态加载的页面中也能添加标签
-const observer = new MutationObserver((mutations, obs) => {
-  addPincheTab();
-});
-
-// 配置观察选项
-observer.observe(document, {
-  childList: true,
-  subtree: true,
-});
-
-// 初始调用
-addPincheTab();
-
 // src/user-scripts/index.ts
 function runAfterLoaded(fn) {
   if (document.readyState !== "loading") {
@@ -5021,33 +5952,35 @@ runAfterLoaded(() => {
 
 // v2p: replace legacy heart/reply icons with SVG controls
 (function () {
-  'use strict';
+  "use strict";
+  const docEl = document.documentElement;
+  if (docEl) docEl.classList.add("v2p-topnav-pending");
 
   // 统一图标尺寸 & 描边粗细
-  const ICON_SIZE = 14;        // 图标像素大小：18x18，你可以改成 16 / 20 等
-  const STROKE_WIDTH = 2;      // 描边粗细
-  const ICON_OPACITY = 0.4;    // 60% 不透明度
+  const ICON_SIZE = 14; // 图标像素大小：18x18，你可以改成 16 / 20 等
+  const STROKE_WIDTH = 2; // 描边粗细
+  const ICON_OPACITY = 0.4; // 60% 不透明度
 
   function createSvgHeart() {
-    const svgNS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('xmlns', svgNS);
-    svg.setAttribute('width', ICON_SIZE);
-    svg.setAttribute('height', ICON_SIZE);
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', STROKE_WIDTH);
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('data-lucide', 'heart');
-    svg.setAttribute('class', 'lucide lucide-heart');
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("xmlns", svgNS);
+    svg.setAttribute("width", ICON_SIZE);
+    svg.setAttribute("height", ICON_SIZE);
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", STROKE_WIDTH);
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("data-lucide", "heart");
+    svg.setAttribute("class", "lucide lucide-heart");
     svg.style.opacity = String(ICON_OPACITY);
 
-    const path = document.createElementNS(svgNS, 'path');
+    const path = document.createElementNS(svgNS, "path");
     path.setAttribute(
-      'd',
-      'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z'
+      "d",
+      "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
     );
     svg.appendChild(path);
 
@@ -5055,25 +5988,25 @@ runAfterLoaded(() => {
   }
 
   function createSvgReply() {
-    const svgNS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('xmlns', svgNS);
-    svg.setAttribute('width', ICON_SIZE);
-    svg.setAttribute('height', ICON_SIZE);
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', STROKE_WIDTH);
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('data-lucide', 'message-square');
-    svg.setAttribute('class', 'lucide lucide-message-square');
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("xmlns", svgNS);
+    svg.setAttribute("width", ICON_SIZE);
+    svg.setAttribute("height", ICON_SIZE);
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", STROKE_WIDTH);
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("data-lucide", "message-square");
+    svg.setAttribute("class", "lucide lucide-message-square");
     svg.style.opacity = String(ICON_OPACITY);
 
-    const path = document.createElementNS(svgNS, 'path');
+    const path = document.createElementNS(svgNS, "path");
     path.setAttribute(
-      'd',
-      'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
+      "d",
+      "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
     );
     svg.appendChild(path);
 
@@ -5082,48 +6015,400 @@ runAfterLoaded(() => {
 
   function replaceIcons(root) {
     const doc = root || document;
+    const createOpIcon = (path, viewBox = "0 0 24 24") => {
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("xmlns", svgNS);
+      svg.setAttribute("width", "14");
+      svg.setAttribute("height", "14");
+      svg.setAttribute("viewBox", viewBox);
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.innerHTML = path;
+      return svg;
+    };
 
     // 1. 替换感谢小红心 heart_neue.png
-    doc.querySelectorAll('img[src*="heart_neue.png"]').forEach(img => {
-      const a = img.closest('a');
+    doc.querySelectorAll('img[src*="heart_neue.png"]').forEach((img) => {
+      const a = img.closest("a");
       if (!a) return;
 
-      if (a.dataset.v2pSvgReplaced === 'heart') return;
-      a.dataset.v2pSvgReplaced = 'heart';
+      if (a.dataset.v2pSvgReplaced === "heart") return;
+      a.dataset.v2pSvgReplaced = "heart";
 
       const svg = createSvgHeart();
       // 如果需要，可以保持原来的 vertical-align
-      svg.style.verticalAlign = img.style.verticalAlign || 'middle';
+      svg.style.verticalAlign = img.style.verticalAlign || "middle";
 
       img.replaceWith(svg);
+    });
+
+    // 1.5 替换创作图标 compose.png
+    doc.querySelectorAll('img[src*="compose.png"]').forEach((img) => {
+      const a = img.closest("a");
+      if (!a) return;
+
+      if (a.dataset.v2pSvgReplaced === "compose") return;
+      a.dataset.v2pSvgReplaced = "compose";
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("xmlns", svgNS);
+      svg.setAttribute("width", "20");
+      svg.setAttribute("height", "20");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("class", "lucide lucide-file-plus");
+
+      svg.innerHTML =
+        '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="12" x2="12" y1="12" y2="18"/><line x1="9" x2="15" y1="15" y2="15"/>';
+
+      img.replaceWith(svg);
+
+      // 移除后面那个宽 10 的空 td
+      const td = a.closest("td");
+      if (td && td.nextElementSibling) {
+        const nextTd = td.nextElementSibling;
+        if (nextTd.tagName === "TD" && nextTd.getAttribute("width") === "10") {
+          nextTd.remove();
+        }
+      }
     });
 
     // 2. 替换回复图标 reply_neue.png
-    doc.querySelectorAll('img[src*="reply_neue.png"]').forEach(img => {
-      const a = img.closest('a');
+    doc.querySelectorAll('img[src*="reply_neue.png"]').forEach((img) => {
+      const a = img.closest("a");
       if (!a) return;
 
-      if (a.dataset.v2pSvgReplaced === 'reply') return;
-      a.dataset.v2pSvgReplaced = 'reply';
+      if (a.dataset.v2pSvgReplaced === "reply") return;
+      a.dataset.v2pSvgReplaced = "reply";
 
       const svg = createSvgReply();
-      svg.style.verticalAlign = img.style.verticalAlign || 'middle';
+      svg.style.verticalAlign = img.style.verticalAlign || "middle";
 
       img.replaceWith(svg);
     });
+
+    // 2.5 替换余额区域金银铜图标
+    const balanceIcons = [
+      { src: "gold@2x.png", color: "#FFD700" }, // 金色
+      { src: "silver@2x.png", color: "#C0C0C0" }, // 银色
+      { src: "bronze@2x.png", color: "#CD7F32" }, // 铜色
+    ];
+
+    balanceIcons.forEach(({ src, color }) => {
+      doc.querySelectorAll(`img[src*="${src}"]`).forEach((img) => {
+        if (img.dataset.v2pSvgReplaced) return;
+        img.dataset.v2pSvgReplaced = "balance";
+
+        const svgNS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(svgNS, "svg");
+        svg.setAttribute("xmlns", svgNS);
+        svg.setAttribute("width", "16");
+        svg.setAttribute("height", "16");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", color);
+        svg.setAttribute("stroke", color);
+        svg.setAttribute("stroke-width", "2");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("class", "lucide lucide-circle-dot");
+        svg.style.verticalAlign = "middle";
+
+        // circle-dot 图标路径
+        svg.innerHTML =
+          '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1" fill="white" stroke="white"/>';
+
+        img.replaceWith(svg);
+      });
+    });
+
+    // 2.5 顶部导航图标 (首页, 用户名, 记事本, Planet, 设置, 登出)
+    const topNavLinks = document.querySelectorAll("#Top .tools > a.top");
+    if (topNavLinks.length > 0) {
+      topNavLinks.forEach((a) => {
+        if (a.dataset.v2pSvgReplaced) return;
+
+        const text = a.textContent.trim();
+        const href = a.getAttribute("href");
+        let icon = null;
+        let content = null;
+
+        if (text === "首页" || href === "/") {
+          icon = "house";
+          content =
+            '<path d="M15 21v-8a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
+        } else if (href && href.startsWith("/member/")) {
+          icon = "user";
+          content =
+            '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>';
+        } else if (text === "记事本" || href === "/notes") {
+          icon = "file-text";
+          content =
+            '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/>';
+        } else if (text === "Planet" || href === "/planet") {
+          icon = "globe";
+          content =
+            '<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" x2="22" y1="12" y2="12"/>';
+        } else if (text === "设置" || href === "/settings") {
+          icon = "settings";
+          content =
+            '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
+        } else if (text === "登出" || href.includes("signout")) {
+          icon = "log-out";
+          content =
+            '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>';
+        }
+
+        if (icon && content) {
+          a.dataset.v2pSvgReplaced = icon;
+          const svgNS = "http://www.w3.org/2000/svg";
+          const svg = document.createElementNS(svgNS, "svg");
+          svg.setAttribute("xmlns", svgNS);
+          svg.setAttribute("width", "15");
+          svg.setAttribute("height", "15");
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.setAttribute("class", `lucide lucide-${icon}`);
+          svg.style.marginRight = "5px";
+          svg.style.verticalAlign = "text-bottom";
+
+          svg.innerHTML = content;
+          a.prepend(svg);
+        }
+      });
+    }
+    if (docEl) {
+      const ready =
+        topNavLinks.length === 0 ||
+        Array.from(topNavLinks).every(
+          (a) =>
+            a.dataset.v2pSvgReplaced ||
+            a.getAttribute("data-v2p-svg-replaced") ||
+            a.querySelector("svg"),
+        );
+      if (ready) docEl.classList.remove("v2p-topnav-pending");
+    }
+
+    // 2.6 主题页操作按钮图标化（收藏 / Tweet / Share / 忽略 / 感谢）
+    const opLinks = doc.querySelectorAll(
+      "#Wrapper .content .box .inner .fr a.op",
+    );
+    if (opLinks.length > 0) {
+      opLinks.forEach((a) => {
+        if (a.dataset.v2pOpIcon) return;
+        const text = (a.textContent || "").trim();
+        let iconPath = null;
+        if (text.includes("加入收藏") || text === "收藏") {
+          iconPath =
+            '<path d="M12 2l2.9 6.1L22 9l-5 4.9L18.2 22 12 18.6 5.8 22 7 13.9 2 9l7.1-.9z"/>';
+        } else if (text === "Tweet") {
+          iconPath =
+            '<path d="M23 3a10.9 10.9 0 0 1-3.14 1.53A4.48 4.48 0 0 0 12.1 8v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"/>';
+        } else if (text === "Share") {
+          iconPath =
+            '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>';
+        } else if (text.includes("忽略主题")) {
+          iconPath =
+            '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5 0-9.27-3.11-11-8 1.21-3.08 3.62-5.39 6.69-6.56"/><path d="M1 1l22 22"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8a10.94 10.94 0 0 1-4.29 5.3"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/>';
+        } else if (text === "感谢") {
+          iconPath =
+            '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 22l7.8-8.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>';
+        }
+        if (!iconPath) return;
+        a.dataset.v2pOpIcon = "1";
+        a.classList.add("v2p-op-icon");
+        a.setAttribute("title", text);
+        a.setAttribute("aria-label", text);
+        a.textContent = "";
+        a.appendChild(createOpIcon(iconPath));
+      });
+
+      // 清理 #Main 内 op 旁的 &nbsp; 文本节点
+      doc.querySelectorAll("#Main .fr").forEach((container) => {
+        Array.from(container.childNodes).forEach((node) => {
+          if (
+            node.nodeType === 3 &&
+            (!node.textContent.trim() || node.textContent.includes("\u00a0"))
+          ) {
+            node.remove();
+          }
+        });
+      });
+    }
+
+    // 3. 替换侧边栏/移动端菜单图标 (图片库, 记事本, Planet, 时间轴, 个人主页, 节点收藏, 主题收藏, 设置, 语言选择, 登出)
+    if (doc.querySelectorAll) {
+      const menuItems = [
+        {
+          text: "图片库",
+          icon: "image",
+          content:
+            '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+        },
+        {
+          text: "记事本",
+          icon: "file-text",
+          content:
+            '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/>',
+        },
+        {
+          text: "Planet",
+          icon: "globe",
+          content:
+            '<circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+        },
+        {
+          text: "时间轴",
+          icon: "clock",
+          content:
+            '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+        },
+        {
+          text: "个人主页",
+          href: "/member/",
+          icon: "user",
+          content:
+            '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+        },
+        {
+          text: "节点收藏",
+          href: "/my/nodes",
+          icon: "bookmark",
+          content:
+            '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
+        },
+        {
+          text: "主题收藏",
+          href: "/my/topics",
+          icon: "star",
+          content:
+            '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+        },
+        {
+          text: "设置",
+          href: "/settings",
+          icon: "settings",
+          content:
+            '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+        },
+        {
+          text: "语言选择",
+          href: "/select/language",
+          icon: "languages",
+          content:
+            '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+        },
+        {
+          text: "登出",
+          href: "/signout",
+          icon: "log-out",
+          content:
+            '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+        },
+      ];
+
+      menuItems.forEach(({ text, href, icon, content }) => {
+        // 只在菜单区域内查找链接（#menu-body），避免影响页面其他区域的链接
+        const menuBody = doc.getElementById
+          ? doc.getElementById("menu-body")
+          : doc.querySelector("#menu-body");
+        if (!menuBody) return;
+        const links = Array.from(menuBody.querySelectorAll("a"));
+
+        links.forEach((a) => {
+          if (a.dataset.v2pSvgReplaced) return;
+
+          const linkText = a.textContent.trim();
+          const linkHref = a.getAttribute("href") || "";
+
+          // 匹配条件：文本匹配 或 href 精确匹配（避免误伤其他链接）
+          const textMatch = linkText === text;
+          // 对于 /member/ 这样的路径，只匹配纯文本，不使用 href 匹配
+          const hrefMatch =
+            href && href !== "/member/" && linkHref.includes(href);
+
+          if (textMatch || hrefMatch) {
+            // 检查是否已有图标（img 或 svg）
+            const existingImg = a.querySelector("img");
+            const existingSvg = a.querySelector("svg");
+
+            if (existingImg) {
+              // 替换已有的 img
+              a.dataset.v2pSvgReplaced = icon;
+              const svgNS = "http://www.w3.org/2000/svg";
+              const svg = document.createElementNS(svgNS, "svg");
+              svg.setAttribute("xmlns", svgNS);
+              svg.setAttribute("width", "16");
+              svg.setAttribute("height", "16");
+              svg.setAttribute("viewBox", "0 0 24 24");
+              svg.setAttribute("fill", "none");
+              svg.setAttribute("stroke", "currentColor");
+              svg.setAttribute("stroke-width", "2");
+              svg.setAttribute("stroke-linecap", "round");
+              svg.setAttribute("stroke-linejoin", "round");
+              svg.setAttribute("class", `lucide lucide-${icon}`);
+              svg.style.verticalAlign =
+                existingImg.style.verticalAlign || "middle";
+              svg.style.marginRight = "10px";
+              svg.style.opacity = "0.7";
+              svg.innerHTML = content;
+              existingImg.replaceWith(svg);
+            } else if (!existingSvg) {
+              // 为纯文本链接添加图标（仅当没有 svg 时）
+              a.dataset.v2pSvgReplaced = icon;
+              const svgNS = "http://www.w3.org/2000/svg";
+              const svg = document.createElementNS(svgNS, "svg");
+              svg.setAttribute("xmlns", svgNS);
+              svg.setAttribute("width", "16");
+              svg.setAttribute("height", "16");
+              svg.setAttribute("viewBox", "0 0 24 24");
+              svg.setAttribute("fill", "none");
+              svg.setAttribute("stroke", "currentColor");
+              svg.setAttribute("stroke-width", "2");
+              svg.setAttribute("stroke-linecap", "round");
+              svg.setAttribute("stroke-linejoin", "round");
+              svg.setAttribute("class", `lucide lucide-${icon}`);
+              svg.style.display = "inline-block";
+              svg.style.verticalAlign = "middle";
+              svg.style.marginRight = "10px";
+              svg.style.opacity = "0.7";
+              svg.innerHTML = content;
+              a.insertBefore(svg, a.firstChild);
+            }
+          }
+        });
+      });
+    }
   }
 
   // 初次执行
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => replaceIcons());
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => replaceIcons());
   } else {
     replaceIcons();
   }
 
+  // 兜底：避免顶部导航永久隐藏
+  setTimeout(() => {
+    if (docEl) docEl.classList.remove("v2p-topnav-pending");
+  }, 1500);
+
   // 监听后续插入
-  const observer = new MutationObserver(mutations => {
+  const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
-      m.addedNodes.forEach(node => {
+      m.addedNodes.forEach((node) => {
         if (node.nodeType === 1) {
           replaceIcons(node);
         }
@@ -5131,5 +6416,864 @@ runAfterLoaded(() => {
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+})();
+
+// ==================== 隐藏 0 条未读提醒 & 用户名旁添加提醒图标 ====================
+(function () {
+  let hasUnread = false;
+
+  function checkUnreadNotifications() {
+    // 查找包含未读提醒的链接
+    const notificationLinks = document.querySelectorAll(
+      'a[href="/notifications"]',
+    );
+    hasUnread = false;
+
+    notificationLinks.forEach((link) => {
+      const text = link.textContent.trim();
+      const match = text.match(/^(\d+)\s*未读提醒$/);
+
+      if (match) {
+        const count = parseInt(match[1], 10);
+        if (count === 0) {
+          // 隐藏 0 条未读提醒的容器
+          const cell = link.closest(".cell");
+          if (cell) {
+            cell.style.display = "none";
+          }
+        } else {
+          hasUnread = true;
+        }
+      }
+    });
+
+    // 更新用户名旁边的提醒图标
+    updateNotificationIcon();
+  }
+
+  function updateNotificationIcon() {
+    // 查找用户名区域（移动端菜单中的 .bigger.flex-one-row）
+    const userNameContainers = document.querySelectorAll(
+      ".bigger.flex-one-row",
+    );
+
+    userNameContainers.forEach((container) => {
+      // 检查是否已经添加过图标
+      if (container.querySelector(".v2p-notification-icon")) return;
+
+      // 查找 spacer，在它前面插入图标
+      const spacer = container.querySelector(".spacer");
+      if (!spacer) return;
+
+      // 创建提醒图标链接
+      const iconLink = document.createElement("a");
+      iconLink.href = "/notifications";
+      iconLink.className = "v2p-notification-icon";
+      iconLink.title = "提醒";
+      iconLink.style.cssText = `
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: auto;
+        padding: 4px;
+      `;
+
+      // 创建 SVG 铃铛图标
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("xmlns", svgNS);
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("class", "lucide lucide-bell");
+      svg.innerHTML =
+        '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>';
+
+      // 根据是否有未读提醒设置颜色
+      if (hasUnread) {
+        svg.style.color = "var(--v2p-color-accent, #f59e0b)";
+      } else {
+        svg.style.color = "var(--v2p-color-font-secondary, #999)";
+        svg.style.opacity = "0.6";
+      }
+
+      iconLink.appendChild(svg);
+      container.insertBefore(iconLink, spacer);
+    });
+
+    // 更新已存在图标的颜色
+    document.querySelectorAll(".v2p-notification-icon svg").forEach((svg) => {
+      if (hasUnread) {
+        svg.style.color = "var(--v2p-color-accent, #f59e0b)";
+        svg.style.opacity = "1";
+      } else {
+        svg.style.color = "var(--v2p-color-font-secondary, #999)";
+        svg.style.opacity = "0.6";
+      }
+    });
+  }
+
+  // 初次执行
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", checkUnreadNotifications);
+  } else {
+    checkUnreadNotifications();
+  }
+
+  // 监听动态变化
+  const observer = new MutationObserver(checkUnreadNotifications);
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+})();
+
+// ==================== 节点导航自定义管理 ====================
+(function () {
+  const STORAGE_KEY = "v2p_nav_config";
+  const TABS_SELECTOR = "#Tabs";
+  const docEl = document.documentElement;
+  if (docEl) docEl.classList.add("v2p-tabs-pending");
+
+  // 默认节点列表 (fallback)
+  const DEFAULT_NAV = [
+    { name: "技术", href: "/?tab=tech", visible: true },
+    { name: "创意", href: "/?tab=creative", visible: true },
+    { name: "好玩", href: "/?tab=play", visible: true },
+    { name: "Apple", href: "/?tab=apple", visible: true },
+    { name: "酷工作", href: "/?tab=jobs", visible: true },
+    { name: "交易", href: "/?tab=deals", visible: true },
+    { name: "城市", href: "/?tab=city", visible: true },
+    { name: "问与答", href: "/?tab=qna", visible: true },
+    { name: "最热", href: "/?tab=hot", visible: true },
+    { name: "全部", href: "/?tab=all", visible: true },
+    { name: "R2", href: "/?tab=r2", visible: true },
+    { name: "VXNA", href: "/xna", visible: true },
+    { name: "节点", href: "/?tab=nodes", visible: true },
+    // 关注之后是 Planet
+    { name: "Planet", href: "/planet", visible: true },
+  ];
+
+  async function getNavConfig() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([STORAGE_KEY], (result) => {
+        resolve(result[STORAGE_KEY] || null);
+      });
+    });
+  }
+
+  async function saveNavConfig(config) {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [STORAGE_KEY]: config }, resolve);
+    });
+  }
+
+  // 初始化
+  async function init() {
+    const tabsContainer = document.querySelector(TABS_SELECTOR);
+    if (!tabsContainer) {
+      if (docEl) docEl.classList.remove("v2p-tabs-pending");
+      return;
+    }
+
+    // 1. 读取当前页面上的 Tab
+    const currentLinks = Array.from(
+      tabsContainer.querySelectorAll("a.tab, a.tab_current"),
+    );
+    let currentData = currentLinks
+      .map((a) => ({
+        name: a.textContent.trim(),
+        href: a.getAttribute("href"),
+        visible: true,
+      }))
+      .filter((item) => item.name);
+
+    // 1.1 尝试抓取 Planet (它是图片链接，没有 tab class)
+    const planetLink = tabsContainer.querySelector('a[href="/planet"]');
+    if (planetLink) {
+      currentData.push({ name: "Planet", href: "/planet", visible: true });
+    }
+
+    let config = await getNavConfig();
+
+    // 如果还没有配置，初始化配置
+    if (!config) {
+      config = currentData.length > 0 ? currentData : DEFAULT_NAV;
+      // 默认把“拼车”去掉
+      config = config.filter((x) => x.name !== "拼车");
+      await saveNavConfig(config);
+    } else {
+      // 检查现有配置是否包含 Planet，如果不包含（旧数据），则补上
+      const hasPlanet = config.some((item) => item.href === "/planet");
+      if (!hasPlanet) {
+        config.push({ name: "Planet", href: "/planet", visible: true });
+        await saveNavConfig(config);
+      }
+    }
+
+    renderTabs(tabsContainer, config);
+    if (docEl) docEl.classList.remove("v2p-tabs-pending");
+  }
+
+  // 图标映射 (name -> svg path content)
+  const TAB_ICONS = {
+    技术: '<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />', // code
+    创意: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-1 1.5-2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" /><path d="M9 18h6" /><path d="M10 22h4" />', // lightbulb
+    好玩: '<line x1="6" x2="10" y1="12" y2="12" /><line x1="8" x2="8" y1="10" y2="14" /><line x1="15" x2="15.01" y1="13" y2="13" /><line x1="18" x2="18.01" y1="11" y2="11" /><rect width="20" height="12" x="2" y="6" rx="2" />', // gamepad-2
+    Apple:
+      '<svg width="14" height="14" viewBox="-1.5 0 20 20" version="1.1" xmlns="http://www.w3.org/2000/svg" fill="currentColor" style="margin-right: 4px; opacity: 0.8;"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><g transform="translate(-102.000000, -7439.000000)" fill="currentColor"><g transform="translate(56.000000, 160.000000)"><path d="M57.5708873,7282.19296 C58.2999598,7281.34797 58.7914012,7280.17098 58.6569121,7279 C57.6062792,7279.04 56.3352055,7279.67099 55.5818643,7280.51498 C54.905374,7281.26397 54.3148354,7282.46095 54.4735932,7283.60894 C55.6455696,7283.69593 56.8418148,7283.03894 57.5708873,7282.19296 M60.1989864,7289.62485 C60.2283111,7292.65181 62.9696641,7293.65879 63,7293.67179 C62.9777537,7293.74279 62.562152,7295.10677 61.5560117,7296.51675 C60.6853718,7297.73474 59.7823735,7298.94772 58.3596204,7298.97372 C56.9621472,7298.99872 56.5121648,7298.17973 54.9134635,7298.17973 C53.3157735,7298.17973 52.8162425,7298.94772 51.4935978,7298.99872 C50.1203933,7299.04772 49.0738052,7297.68074 48.197098,7296.46676 C46.4032359,7293.98379 45.0330649,7289.44985 46.8734421,7286.3899 C47.7875635,7284.87092 49.4206455,7283.90793 51.1942837,7283.88393 C52.5422083,7283.85893 53.8153044,7284.75292 54.6394294,7284.75292 C55.4635543,7284.75292 57.0106846,7283.67793 58.6366882,7283.83593 C59.3172232,7283.86293 61.2283842,7284.09893 62.4549652,7285.8199 C62.355868,7285.8789 60.1747177,7287.09489 60.1989864,7289.62485"></path></g></g></g></svg>',
+    酷工作:
+      '<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /><rect width="20" height="14" x="2" y="6" rx="2" />', // briefcase
+    交易: '<path d="m21 16-2 6H5l-2-6" /><path d="M3 6v10c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V6" /><path d="M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2" />', // shopping-bag
+    城市: '<rect width="16" height="20" x="4" y="2" rx="2" ry="2" /><path d="M9 22v-4h6v4" /><path d="M8 6h.01" /><path d="M16 6h.01" /><path d="M12 6h.01" /><path d="M12 10h.01" /><path d="M12 14h.01" /><path d="M16 10h.01" /><path d="M16 14h.01" /><path d="M8 10h.01" /><path d="M8 14h.01" />', // building-2
+    问与答:
+      '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />', // message-circle-question
+    最热: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.1.243-2.143.5-3.5a6 6 0 0 1 1.5-2.5c-.002 1.25.502 2.5 1.5 3.5.5.5 1 1.5 1 3a2 2 0 0 1-2 2z" />', // flame
+    全部: '<rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" />', // layout-grid
+    R2: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" x2="12" y1="22.08" y2="12" />', // box
+    VXNA: '<path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" />', // rss
+    节点: '<line x1="4" x2="20" y1="9" y2="9" /><line x1="4" x2="20" y1="15" y2="15" /><line x1="10" x2="8" y1="3" y2="21" /><line x1="16" x2="14" y1="3" y2="21" />', // hash
+    关注: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />', // users
+  };
+
+  function renderTabs(container, config) {
+    // 保留非 tab 元素，但要排除 Planet (因为它现在归 config 管)
+    const extras = [];
+    Array.from(container.childNodes).forEach((node) => {
+      // ... (省略: 与之前一致)
+      if (
+        node.nodeType === 1 &&
+        !node.classList.contains("tab") &&
+        !node.classList.contains("tab_current") &&
+        !node.classList.contains("v2p-nav-settings-btn")
+      ) {
+        // 排除 Planet 链接
+        if (node.tagName === "A" && node.getAttribute("href") === "/planet") {
+          return;
+        }
+        extras.push(node);
+      }
+    });
+
+    // 清空容器
+    container.innerHTML = "";
+
+    // 渲染 config 中的 tab
+    config.forEach((item) => {
+      if (item.visible) {
+        const a = document.createElement("a");
+        a.href = item.href;
+
+        // 特殊处理 Planet: 显示 SVG 图标
+        if (item.href === "/planet") {
+          a.innerHTML =
+            '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.8;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" x2="22" y1="12" y2="12"/></svg>';
+          a.className = "tab v2p-hover-btn";
+          a.style.marginLeft = "10px";
+          a.style.display = "inline-flex";
+          a.style.alignItems = "center";
+        } else {
+          // 注入 SVG 图标
+          const iconPath = TAB_ICONS[item.name];
+          let iconHtml = "";
+          if (iconPath) {
+            // 检查是否是完整的 SVG 字符串（例如 Apple 图标）
+            if (iconPath.trim().startsWith("<svg")) {
+              iconHtml = iconPath;
+            } else {
+              // 否则作为 path 注入到标准 SVG 容器中
+              iconHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; opacity: 0.8;">${iconPath}</svg>`;
+            }
+          }
+
+          a.innerHTML = `${iconHtml}${item.name}`;
+
+          // 为了让图标和文字居中对齐，使用 flex
+          a.style.display = "inline-flex";
+          a.style.alignItems = "center";
+
+          // current 判断：优先从 URL 参数获取，没有则从 localStorage 恢复
+          const urlTab = new URLSearchParams(window.location.search).get("tab");
+          const currentTab = urlTab || localStorage.getItem("v2p_last_tab_id");
+          const itemTab = new URL(
+            item.href,
+            "https://v2ex.com",
+          ).searchParams.get("tab");
+
+          // 如果 URL 有 ?tab= 参数，保存到 localStorage
+          if (urlTab) {
+            localStorage.setItem("v2p_last_tab_id", urlTab);
+          }
+
+          if (currentTab === itemTab && itemTab) {
+            a.className = "tab_current";
+          } else if (window.location.pathname === item.href) {
+            a.className = "tab_current";
+          } else {
+            a.className = "tab v2p-hover-btn";
+          }
+        }
+        container.appendChild(a);
+      }
+    });
+
+    // 把 extras 加回去 (Planet 图标等)
+    extras.forEach((node) => container.appendChild(node));
+
+    // 添加设置按钮
+    const settingsBtn = document.createElement("span");
+    settingsBtn.className = "v2p-nav-settings-btn v2p-hover-btn";
+    settingsBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+    settingsBtn.title = "自定义导航";
+    settingsBtn.style.cursor = "pointer";
+    settingsBtn.style.marginLeft = "10px";
+    settingsBtn.style.verticalAlign = "middle";
+    settingsBtn.style.display = "inline-flex";
+    settingsBtn.style.alignItems = "center";
+    settingsBtn.style.justifyContent = "center";
+    settingsBtn.style.lineHeight = "1";
+    settingsBtn.style.color = "#ccc";
+
+    settingsBtn.onclick = () => openNavSettings(config);
+
+    container.appendChild(settingsBtn);
+    if (docEl) docEl.classList.remove("v2p-tabs-pending");
+
+    // ★ 移动端 Tabs 滚动位置恢复 & 记忆
+    // renderTabs 会 innerHTML='' 重建容器，导致之前的 scrollLeft 和 scroll 监听器丢失
+    // 所以必须在这里重新恢复和绑定
+    if (document.body && document.body.classList.contains("v2p-mobile")) {
+      const SCROLL_STORAGE_KEY = "v2p-mobile-tabs-scroll";
+      // 首页所有 tab 共用 "home"；其他页面用路径
+      const pageKey = (() => {
+        const path = location.pathname || "/";
+        try {
+          const tab = new URLSearchParams(location.search).get("tab") || "";
+          return tab || path === "/" ? "home" : path;
+        } catch {
+          return path;
+        }
+      })();
+      const fullKey = `${SCROLL_STORAGE_KEY}:${pageKey}`;
+
+      // 恢复滚动位置（使用 rAF 确保布局完成）
+      requestAnimationFrame(() => {
+        const saved = localStorage.getItem(fullKey);
+        if (saved != null) {
+          const val = Number(saved);
+          if (!Number.isNaN(val)) {
+            container.scrollLeft = val;
+            return;
+          }
+        }
+        // 没有保存记录时，让当前 tab 居中显示
+        const current = container.querySelector(".tab_current");
+        if (current) {
+          const parentRect = container.getBoundingClientRect();
+          const itemRect = current.getBoundingClientRect();
+          container.scrollLeft +=
+            itemRect.left -
+            parentRect.left -
+            (parentRect.width - itemRect.width) / 2;
+        }
+      });
+
+      // 监听滚动，保存位置
+      let ticking = false;
+      container.addEventListener(
+        "scroll",
+        () => {
+          if (ticking) return;
+          ticking = true;
+          requestAnimationFrame(() => {
+            ticking = false;
+            localStorage.setItem(fullKey, String(container.scrollLeft));
+          });
+        },
+        { passive: true },
+      );
+    }
+  }
+
+  function openNavSettings(currentConfig) {
+    // 移除旧的（如果存在）
+    let existingMenu = document.getElementById("v2p-nav-menu");
+    if (existingMenu) {
+      existingMenu.remove();
+      return; // 如果已存在，再次点击则是关闭
+    }
+
+    const settingsBtn = document.querySelector(".v2p-nav-settings-btn");
+    if (!settingsBtn) return;
+
+    const menu = document.createElement("div");
+    menu.id = "v2p-nav-menu";
+    // 样式复用 .v2p-theme-menu 的风格，但针对内容做微调
+    menu.style.cssText = `
+        position: absolute;
+        top: ${settingsBtn.offsetTop + settingsBtn.offsetHeight + 5}px;
+        right: 0; /* 对齐右侧 */
+        background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75);
+        border: 1px solid var(--box-border-color);
+        box-shadow: var(--v2p-widget-shadow);
+        border-radius: 14px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        width: 220px;
+        z-index: 2000;
+        backdrop-filter: blur(12px) saturate(180%);
+        -webkit-backdrop-filter: blur(12px) saturate(180%);
+        animation: v2p-fade-in 0.15s ease-out;
+    `;
+
+    // 如果父容器 #Tabs 是 relative/fixed/absolute，offsetParent 可能是它
+    // 我们把 menu 挂到 document.body 并手动计算位置，或者直接挂 settingsBtn 旁边（如果 Tab 容器没有 overflow:hidden）
+    // 为了保险起见，挂在 body 上，绝对定位
+    const rect = settingsBtn.getBoundingClientRect();
+    menu.style.position = "absolute";
+    menu.style.top = window.scrollY + rect.bottom + 5 + "px";
+    menu.style.left = window.scrollX + rect.right - 220 + "px"; // 右对齐
+
+    const list = document.createElement("div");
+    list.style.cssText = `
+        max-height: 300px;
+        overflow-y: auto;
+        margin-bottom: 6px;
+    `;
+
+    let dragSrcIndex = null;
+
+    function clearDragStyles() {
+      list
+        .querySelectorAll(".v2p-nav-drop-before, .v2p-nav-drop-after")
+        .forEach((el) => {
+          el.classList.remove("v2p-nav-drop-before", "v2p-nav-drop-after");
+          el.style.boxShadow = "";
+        });
+    }
+
+    function moveItem(fromIndex, direction) {
+      const toIndex = fromIndex + direction;
+      if (toIndex < 0 || toIndex >= currentConfig.length) return;
+      const next = currentConfig.slice();
+      [next[fromIndex], next[toIndex]] = [next[toIndex], next[fromIndex]];
+      currentConfig.splice(0, currentConfig.length, ...next);
+    }
+
+    function reorderConfig(fromIndex, toIndex) {
+      if (fromIndex == null || toIndex == null || fromIndex === toIndex) return;
+      const next = currentConfig.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      const insertIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
+      next.splice(insertIndex, 0, moved);
+      currentConfig.splice(0, currentConfig.length, ...next);
+    }
+
+    function renderList() {
+      list.innerHTML = "";
+      currentConfig.forEach((item, index) => {
+        const row = document.createElement("div");
+        // 复用 .v2p-theme-menu-item 的样式感
+        row.className = "v2p-theme-menu-item"; // 使用既有类名以获得 hover 效果
+        row.style.cssText = `
+                padding: 6px 10px;
+                margin: 2px 0;
+                cursor: default;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                border-radius: 8px;
+                font-size: 13px;
+                color: var(--v2p-color-font-secondary);
+                justify-content: space-between;
+            `;
+
+        // 左侧：拖拽 + Checkbox + 文字
+        const leftGroup = document.createElement("div");
+        leftGroup.style.display = "flex";
+        leftGroup.style.alignItems = "center";
+        leftGroup.style.gap = "8px";
+
+        // Move up/down buttons (works on both desktop and mobile)
+        const moveGroup = document.createElement("span");
+        moveGroup.style.cssText = "display:inline-flex;flex-direction:column;gap:0;margin-right:2px;";
+
+        const btnUp = document.createElement("button");
+        btnUp.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+        btnUp.style.cssText = "border:none;background:none;padding:1px 3px;cursor:pointer;opacity:0.35;line-height:0;-webkit-tap-highlight-color:transparent;";
+        btnUp.disabled = index === 0;
+        if (index === 0) btnUp.style.opacity = "0.12";
+        btnUp.onclick = async (e) => {
+          e.stopPropagation();
+          moveItem(index, -1);
+          renderList();
+          await saveAndRefresh();
+        };
+
+        const btnDown = document.createElement("button");
+        btnDown.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+        btnDown.style.cssText = "border:none;background:none;padding:1px 3px;cursor:pointer;opacity:0.35;line-height:0;-webkit-tap-highlight-color:transparent;";
+        btnDown.disabled = index === currentConfig.length - 1;
+        if (index === currentConfig.length - 1) btnDown.style.opacity = "0.12";
+        btnDown.onclick = async (e) => {
+          e.stopPropagation();
+          moveItem(index, 1);
+          renderList();
+          await saveAndRefresh();
+        };
+
+        moveGroup.appendChild(btnUp);
+        moveGroup.appendChild(btnDown);
+
+        // Desktop drag handle (hidden on mobile via media query)
+        const dragHandle = document.createElement("span");
+        dragHandle.className = "v2p-nav-drag-handle";
+        dragHandle.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>';
+        dragHandle.style.cursor = "grab";
+        dragHandle.style.display = "inline-flex";
+        dragHandle.style.alignItems = "center";
+        dragHandle.style.opacity = "0.6";
+        dragHandle.title = "拖拽排序";
+
+        dragHandle.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          row.draggable = true;
+        });
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = item.visible;
+        checkbox.style.cursor = "pointer";
+        checkbox.onclick = (e) => e.stopPropagation();
+        checkbox.onchange = (e) => {
+          item.visible = e.target.checked;
+          saveAndRefresh();
+        };
+
+        const name = document.createElement("span");
+        name.textContent = item.name;
+
+        leftGroup.appendChild(moveGroup);
+        leftGroup.appendChild(dragHandle);
+        leftGroup.appendChild(checkbox);
+        leftGroup.appendChild(name);
+
+        row.appendChild(leftGroup);
+        list.appendChild(row);
+
+        row.addEventListener("dragstart", (e) => {
+          dragSrcIndex = index;
+          row.classList.add("v2p-nav-dragging");
+          row.style.opacity = "0.45";
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", "");
+        });
+
+        row.addEventListener("dragover", (e) => {
+          if (dragSrcIndex == null || dragSrcIndex === index) return;
+          e.preventDefault();
+          const rect = row.getBoundingClientRect();
+          const dropAfter = e.clientY >= rect.top + rect.height / 2;
+          clearDragStyles();
+          row.classList.add(
+            dropAfter ? "v2p-nav-drop-after" : "v2p-nav-drop-before",
+          );
+          row.style.boxShadow = dropAfter
+            ? "0 2px 0 0 var(--v2p-color-accent, #4a90d9) inset"
+            : "0 -2px 0 0 var(--v2p-color-accent, #4a90d9) inset";
+        });
+
+        row.addEventListener("drop", async (e) => {
+          if (dragSrcIndex == null || dragSrcIndex === index) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = row.getBoundingClientRect();
+          const dropAfter = e.clientY >= rect.top + rect.height / 2;
+          const targetIndex = index + (dropAfter ? 1 : 0);
+          reorderConfig(dragSrcIndex, targetIndex);
+          dragSrcIndex = null;
+          clearDragStyles();
+          renderList();
+          await saveAndRefresh();
+        });
+
+        row.addEventListener("dragend", () => {
+          row.draggable = false;
+          row.classList.remove("v2p-nav-dragging");
+          row.style.opacity = "";
+          dragSrcIndex = null;
+          clearDragStyles();
+        });
+      });
+    }
+
+    async function saveAndRefresh() {
+      await saveNavConfig(currentConfig);
+      const tabsContainer = document.querySelector(TABS_SELECTOR);
+      if (tabsContainer) renderTabs(tabsContainer, currentConfig);
+    }
+
+    renderList();
+    menu.appendChild(list);
+
+    // 点击外部关闭
+    function closeHandler(e) {
+      if (!menu.contains(e.target) && !settingsBtn.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("click", closeHandler);
+      }
+    }
+
+    // 延迟添加监听，防止本次点击触发
+    setTimeout(() => {
+      document.addEventListener("click", closeHandler);
+    }, 0);
+
+    document.body.appendChild(menu);
+  }
+
+  // 启动
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+
+// ==================== 清除按钮图标化 ====================
+(function () {
+  function replaceClearTextWithIcon() {
+    // 查找所有包含 clearMyRecentTopics 的清除链接
+    const clearLinks = document.querySelectorAll(
+      'a[onclick*="clearMyRecentTopics"]',
+    );
+
+    clearLinks.forEach((link) => {
+      // 如果已经处理过，跳过
+      if (link.querySelector("svg")) return;
+
+      // 创建 Trash2 风格的 SVG 图标
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("xmlns", svgNS);
+      svg.setAttribute("width", "14");
+      svg.setAttribute("height", "14");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("class", "lucide lucide-trash-2");
+      svg.style.verticalAlign = "middle";
+      svg.style.opacity = "0.6";
+      svg.innerHTML =
+        '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>';
+
+      // 添加悬停效果
+      link.addEventListener("mouseenter", () => {
+        svg.style.opacity = "1";
+      });
+      link.addEventListener("mouseleave", () => {
+        svg.style.opacity = "0.6";
+      });
+
+      // 清空链接文本，添加图标
+      link.textContent = "";
+      link.title = "清除";
+      link.appendChild(svg);
+    });
+  }
+
+  // 初次执行
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", replaceClearTextWithIcon);
+  } else {
+    replaceClearTextWithIcon();
+  }
+
+  // 监听动态变化（v2ex 可能会动态加载内容）
+  const observer = new MutationObserver(replaceClearTextWithIcon);
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+})();
+
+// ==================== V2EX Plus Settings Page ====================
+(function () {
+  const SETTINGS_PATH = "/settings";
+
+  async function initSettingsPage() {
+    if (!window.location.pathname.startsWith(SETTINGS_PATH)) return;
+
+    const navContainer = document.querySelectorAll("#Main .box .cell")[1];
+    if (!navContainer) return;
+
+    // 1. Add "V2EX Plus" Tab
+    const plusTab = document.createElement("a");
+    plusTab.href = "#v2p";
+    plusTab.className = "tab v2p-hover-btn";
+    plusTab.textContent = "V2EX Plus";
+    plusTab.id = "v2p-settings-tab";
+
+    navContainer.appendChild(plusTab);
+
+    const config = (await V2PSyncManager.getConfig()) || {};
+
+    const mainBox = document.querySelector("#Main .box");
+    if (!mainBox) return;
+
+    const boxContent = Array.from(
+      mainBox.querySelectorAll(":scope > .cell, :scope > .inner"),
+    );
+    if (boxContent.length < 2) return;
+    const navCell = boxContent[1];
+
+    // 2. Create Settings Content
+    const settingsContent = document.createElement("div");
+    settingsContent.id = "v2p-settings-panel";
+    settingsContent.style.display = "none";
+    settingsContent.innerHTML = `
+      <div class="cell">V2EX Plus 设置 (WebDAV 同步)</div>
+      <div class="inner">
+        <form id="v2p-webdav-form">
+          <table cellpadding="5" cellspacing="0" border="0" width="100%">
+            <tbody>
+              <tr>
+                <td width="120" align="right">WebDAV 地址</td>
+                <td><input type="text" class="sl" name="url" style="width: 300px;" value="${config.url || ""}" placeholder="http://192.168.1.100:5008/V2exPlus/"></td>
+              </tr>
+              <tr>
+                <td width="120" align="right">用户名</td>
+                <td><input type="text" class="sl" name="user" style="width: 300px;" value="${config.user || ""}"></td>
+              </tr>
+              <tr>
+                <td width="120" align="right">应用密码/Token</td>
+                <td><input type="password" class="sl" name="password" style="width: 300px;" value="${config.password || ""}"></td>
+              </tr>
+              <tr>
+                <td width="120" align="right"></td>
+                <td>
+                  <input type="button" class="super normal button" id="v2p-test-webdav" value="测试连接">
+                  <input type="submit" class="super normal button" value="保存配置">
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </form>
+        <div class="sep20"></div>
+        <div class="cell" style="padding: 10px 0; border-top: 1px solid var(--box-border-color); margin-top: 10px;">数据同步</div>
+        <div class="inner" style="padding: 10px 0;">
+          <input type="button" class="super normal button" id="v2p-push-sync" value="推送当前配置到云端">
+          <input type="button" class="super normal button" id="v2p-pull-sync" value="从云端拉取配置到本地">
+          <div class="sep10"></div>
+          <span class="fade">手动推送会将当前设备的主题、导航等配置覆盖云端；拉取则相反。</span>
+        </div>
+      </div>
+    `;
+    navCell.insertAdjacentElement("afterend", settingsContent);
+
+    // 3. Tab Switching Logic
+    const allTabs = navContainer.querySelectorAll("a.tab, a.tab_current");
+    const hideableContent = boxContent.slice(2);
+
+    function showV2P() {
+      allTabs.forEach((t) => (t.className = "tab v2p-hover-btn"));
+      plusTab.className = "tab_current";
+      hideableContent.forEach((el) => (el.style.display = "none"));
+      settingsContent.style.display = "block";
+    }
+
+    function hideV2P() {
+      plusTab.className = "tab v2p-hover-btn";
+      settingsContent.style.display = "none";
+      hideableContent.forEach((el) => (el.style.display = ""));
+    }
+
+    plusTab.onclick = (e) => {
+      e.preventDefault();
+      showV2P();
+      window.location.hash = "v2p";
+    };
+
+    allTabs.forEach((t) => {
+      if (t !== plusTab) {
+        t.addEventListener("click", () => {
+          if (plusTab.className === "tab_current") hideV2P();
+        });
+      }
+    });
+
+    if (window.location.hash === "#v2p") showV2P();
+
+    // 4. Form Actions
+    const form = settingsContent.querySelector("#v2p-webdav-form");
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      const newConfig = Object.fromEntries(formData.entries());
+      await V2PSyncManager.saveConfig(newConfig);
+      window.v2pShowToast("配置已保存");
+    };
+
+    settingsContent.querySelector("#v2p-test-webdav").onclick = async () => {
+      const formData = new FormData(form);
+      const tmpConfig = Object.fromEntries(formData.entries());
+      try {
+        await V2PSyncManager.testConnection(tmpConfig);
+        window.v2pShowToast("连接成功！");
+      } catch (e) {
+        window.v2pShowToast("连接失败: " + e.message);
+      }
+    };
+
+    settingsContent.querySelector("#v2p-push-sync").onclick = async () => {
+      window.v2pShowToast("正在推送...", 0);
+      try {
+        await V2PSyncManager.push();
+        window.v2pShowToast("同步成功");
+      } catch (e) {
+        window.v2pShowToast("推送失败: " + e.message);
+      }
+    };
+
+    settingsContent.querySelector("#v2p-pull-sync").onclick = async () => {
+      window.v2pShowToast("正在拉取...", 0);
+      try {
+        await V2PSyncManager.pull();
+        window.v2pShowToast("拉取成功，即将刷新页面");
+        setTimeout(() => window.location.reload(), 1500);
+      } catch (e) {
+        window.v2pShowToast("拉取失败: " + e.message);
+      }
+    };
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initSettingsPage);
+  } else {
+    initSettingsPage();
+  }
 })();

@@ -3682,14 +3682,17 @@ a[href*="/settings/night/toggle"] {
     padding: 2px 0;
 }
 .v2p-color-mode-toggle {
+    width: 25px !important;
     height: 25px !important;
     padding: 5px !important;
     border-radius: 50% !important;
     display: inline-flex !important;
     align-items: center;
+    justify-content: center;
 }
 .v2p-color-mode-toggle:hover {
     opacity: 1;
+    background-color: var(--v2p-color-bg-hover, rgba(0, 0, 0, 0.08));
 }
 .v2p-reply-tabs {
     display: flex;

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         V2eX - Polish+
-// @version      4.2
+// @version      3.5
 // @description  V2ex Polish+
 // @author       coolpace
 // @author       2smile

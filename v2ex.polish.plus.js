@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - plus
 // @namespace    https://v2ex.com/
-// @version      3.5
+// @version      3.5.1
 // @description  V2EX Plus userscript port of plus.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*

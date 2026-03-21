@@ -1,7279 +1,5132 @@
 // ==UserScript==
-// @name         V2EX Plus - plus
+// @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
 // @version      3.3
-// @description  V2EX Plus userscript port of plus.js
+// @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
 // @run-at       document-start
-// @grant        GM_addStyle
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_xmlhttpRequest
 // @icon         https://v2ex.com/static/apple-touch-icon-180.png
-// @require      https://code.jquery.com/jquery-3.7.1.min.js
-// @connect      *
+// @grant        none
 // ==/UserScript==
 
-(function () {
-  if (typeof window.chrome !== "object") {
-    window.chrome = {};
-  }
-
-  if (typeof window.chrome.extension === "undefined") {
-    window.chrome.extension = {};
-  }
-
-  const runtimeState = {
-    lastError: null,
-  };
-
-  function normalizeStorageKeys(keys) {
-    if (keys == null) return [];
-    if (Array.isArray(keys)) return keys;
-    if (typeof keys === "string") return [keys];
-    if (typeof keys === "object") return Object.keys(keys);
-    return [];
-  }
-
-  function readStoredValues(keys) {
-    const data = {};
-    for (const key of keys) {
-      data[key] = GM_getValue(key);
-    }
-    return data;
-  }
-
-  function v2pGMRequest(details) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        timeout: 30000,
-        ...details,
-        onload: (response) => resolve(response),
-        onerror: (error) => reject(error),
-        ontimeout: () => reject(new Error("Request timed out")),
-      });
-    });
-  }
-
-  class WebDAV {
-    constructor(serverUrl, username, password) {
-      this.serverUrl = serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`;
-      this.username = username;
-      this.password = password;
-      this.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
-    }
-
-    async test() {
-      const response = await v2pGMRequest({
-        method: "PROPFIND",
-        url: this.serverUrl,
-        headers: {
-          Authorization: this.authHeader,
-          Depth: "0",
-        },
-      });
-      return response.status >= 200 && response.status < 300;
-    }
-
-    async get(filename) {
-      const response = await v2pGMRequest({
-        method: "GET",
-        url: this.serverUrl + filename,
-        headers: {
-          Authorization: this.authHeader,
-        },
-      });
-
-      if (response.status === 404) {
-        return null;
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error("WebDAV GET failed");
-      }
-
-      return response.responseText ? JSON.parse(response.responseText) : null;
-    }
-
-    async put(filename, data) {
-      const response = await v2pGMRequest({
-        method: "PUT",
-        url: this.serverUrl + filename,
-        headers: {
-          Authorization: this.authHeader,
-          "Content-Type": "application/json",
-        },
-        data: JSON.stringify(data),
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error("WebDAV PUT failed");
-      }
-      return true;
-    }
-  }
-
-  window.chrome.storage = window.chrome.storage || {};
-  window.chrome.storage.local = window.chrome.storage.local || {
-    get(keys, callback) {
-      callback(readStoredValues(normalizeStorageKeys(keys)));
-    },
-    set(items, callback) {
-      for (const [key, value] of Object.entries(items || {})) {
-        GM_setValue(key, value);
-      }
-      if (typeof callback === "function") {
-        callback();
-      }
-    },
-  };
-
-  window.chrome.runtime = window.chrome.runtime || {};
-  Object.defineProperty(window.chrome.runtime, "lastError", {
-    configurable: true,
-    enumerable: true,
-    get() {
-      return runtimeState.lastError;
-    },
-  });
-
-  window.chrome.runtime.sendMessage =
-    window.chrome.runtime.sendMessage ||
-    function sendMessage(message, callback) {
-      const done = (payload, error) => {
-        runtimeState.lastError = error
-          ? { message: error.message || String(error) }
-          : null;
-        if (typeof callback === "function") {
-          callback(payload);
-        }
-        runtimeState.lastError = null;
-      };
-
-      (async () => {
-        try {
-          if (!message || typeof message !== "object") {
-            throw new Error("Invalid runtime message");
-          }
-
-          if (message.type === "v2p_sync_test") {
-            const client = new WebDAV(
-              message.config.url,
-              message.config.user,
-              message.config.password,
-            );
-            done({ ok: await client.test() });
-            return;
-          }
-
-          if (message.type === "v2p_sync_push") {
-            const client = new WebDAV(
-              message.config.url,
-              message.config.user,
-              message.config.password,
-            );
-            await client.put(message.filename, message.data);
-            done({ ok: true });
-            return;
-          }
-
-          if (message.type === "v2p_sync_pull") {
-            const client = new WebDAV(
-              message.config.url,
-              message.config.user,
-              message.config.password,
-            );
-            const data = await client.get(message.filename);
-            done({ ok: true, data });
-            return;
-          }
-
-          done({
-            ok: false,
-            error: `Unsupported runtime message: ${message.type}`,
-          });
-        } catch (error) {
-          done({ ok: false, error: error.message || String(error) }, error);
-        }
-      })();
+// GM_addStyle Polyfill for Chrome Extension
+if (typeof GM_addStyle === "undefined") {
+    window.GM_addStyle = function (css) {
+        const style = document.createElement("style");
+        style.type = "text/css";
+        style.textContent = css;
+        document.head
+            ? document.head.appendChild(style)
+            : document.documentElement.appendChild(style);
+        return style;
     };
-})();
+}
 
+// 尽早执行：防闪烁 + 自动同步原生主题
 (function () {
-  /* WebDAV class removed from content script as it is now in background.js */
+    const docEl = document.documentElement;
+    const STORAGE_KEY = "user_preferred_theme_mode";
 
-  /**
-   * Sync Manager
-   */
-  const V2PSyncManager = {
-    STORAGE_KEY: "v2p_webdav_config",
-    SYNC_FILENAME: "v2p_sync_v1.json",
+    // [Note] 初始全屏隐藏已由 critical.css 处理
 
-    async getConfig() {
-      return new Promise((resolve) => {
-        chrome.storage.local.get([this.STORAGE_KEY], (res) =>
-          resolve(res[this.STORAGE_KEY] || null),
-        );
-      });
-    },
+    // 1. 移动端检测（保持原样）
+    const isMobile =
+        /Mobi|Android|iPhone|iPad|iPod|Mobile|Phone/i.test(navigator.userAgent) ||
+        window.innerWidth <= 768;
+    if (isMobile) {
+        docEl.classList.add("v2p-mobile");
+    }
 
-    async saveConfig(config) {
-      return new Promise((resolve) => {
-        chrome.storage.local.set({ [this.STORAGE_KEY]: config }, resolve);
-      });
-    },
+    // 2. 读取用户上次的设置
+    let currentMode = localStorage.getItem(STORAGE_KEY);
 
-    async getClient() {
-      const config = await this.getConfig();
-      if (config && config.url && config.user && config.password) {
-        return new WebDAV(config.url, config.user, config.password);
-      }
-      return null;
-    },
+    // [Fast Path] 1. 立即注入主题类 & 关键 CSS (背景色 + 隐藏 body)
+    // 统一各主题背景色
+    const THEME_BG_MAP = {
+        light: "#f2f3f5",
+        dark: "#1c2128",
+        dawn: "#faf4ed",
+        aqua: "#f2f7fa",
+    };
+
+    let effectiveMode = currentMode;
+    if (currentMode === "auto" || !currentMode) {
+        effectiveMode =
+            window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+    }
+
+    const initBg = THEME_BG_MAP[effectiveMode] || THEME_BG_MAP.light;
+
+    // 立即应用类名，防止 Logo 等元素闪烁
+    if (effectiveMode === "dark") {
+        docEl.classList.add("v2p-theme-dark-default");
+    } else if (effectiveMode === "dawn") {
+        docEl.classList.add("v2p-theme-dawn");
+    } else if (effectiveMode === "aqua") {
+        docEl.classList.add("v2p-theme-aqua");
+    } else {
+        docEl.classList.add("v2p-theme-light-default");
+    }
+
+    // 设置初始背景色 & 隐藏 html
+    docEl.style.backgroundColor = initBg;
+    // docEl.style.visibility = "hidden"; // 已由 v2p-anti-flash 处理
 
     /**
-     * Collect local data to sync
+     * 即时同步 theme-color
      */
-    getLocalData() {
-      const navConfig = null; // Will be handled by chrome.storage logic
-      const themeMode = localStorage.getItem("user_preferred_theme_mode");
-      const sidebarOrder = localStorage.getItem("v2p_sidebar_order");
-      const navCollapsed = localStorage.getItem("v2p_nav_collapsed");
+    const getModeFromClass = () => {
+        if (docEl.classList.contains("v2p-theme-dark-default")) return "dark";
+        if (docEl.classList.contains("v2p-theme-dawn")) return "dawn";
+        if (docEl.classList.contains("v2p-theme-aqua")) return "aqua";
+        if (docEl.classList.contains("v2p-theme-light-default")) return "light";
+        return effectiveMode || "light";
+    };
 
-      return {
-        themeMode,
-        sidebarOrder,
-        navCollapsed,
-        updatedAt: Date.now(),
-      };
-    },
+    const getResolvedMode = () => {
+        let mode = localStorage.getItem(STORAGE_KEY) || "auto";
+        if (mode === "auto") {
+            mode =
+                window.matchMedia &&
+                    window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+        }
+        return mode;
+    };
 
-    async push() {
-      const config = await this.getConfig();
-      if (!config) throw new Error("未配置 WebDAV");
+    const getThemeColor = () => {
+        const mode = getModeFromClass() || getResolvedMode();
+        return THEME_BG_MAP[mode] || THEME_BG_MAP.light;
+    };
 
-      const localData = this.getLocalData();
-      const navConfig = await new Promise((r) =>
-        chrome.storage.local.get(["v2p_nav_config"], (res) =>
-          r(res["v2p_nav_config"]),
-        ),
-      );
-      localData.navConfig = navConfig;
+    const THEME_META_ID = "v2p-theme-color";
+    let syncingThemeMeta = false;
+    const ensureThemeMeta = () => {
+        // 只移除非本插件的 theme-color，避免触发反复重建
+        document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+            if (m.id !== THEME_META_ID) m.remove();
+        });
+        let meta = document.getElementById(THEME_META_ID);
+        if (!meta) {
+            meta = document.createElement("meta");
+            meta.id = THEME_META_ID;
+            meta.name = "theme-color";
+            document.head ? document.head.appendChild(meta) : docEl.appendChild(meta);
+        }
+        return meta;
+    };
 
-      return new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(
-          {
-            type: "v2p_sync_push",
-            config,
-            filename: this.SYNC_FILENAME,
-            data: localData,
-          },
-          (res) => {
-            if (chrome.runtime.lastError)
-              return reject(new Error(chrome.runtime.lastError.message));
-            if (res && res.ok) resolve(true);
-            else reject(new Error((res && res.error) || "推送失败"));
-          },
-        );
-      });
-    },
+    const syncThemeColor = (color) => {
+        if (syncingThemeMeta) return;
+        syncingThemeMeta = true;
+        const meta = ensureThemeMeta();
+        meta.content = color;
+        syncingThemeMeta = false;
+    };
 
-    async pull() {
-      const config = await this.getConfig();
-      if (!config) throw new Error("未配置 WebDAV");
+    // 初始同步
+    syncThemeColor(initBg);
 
-      return new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(
-          {
-            type: "v2p_sync_pull",
-            config,
-            filename: this.SYNC_FILENAME,
-          },
-          (res) => {
-            if (chrome.runtime.lastError)
-              return reject(new Error(chrome.runtime.lastError.message));
-            if (res && res.ok) {
-              const remoteData = res.data;
-              if (remoteData) {
-                if (remoteData.themeMode)
-                  localStorage.setItem(
-                    "user_preferred_theme_mode",
-                    remoteData.themeMode,
-                  );
-                if (remoteData.sidebarOrder)
-                  localStorage.setItem(
-                    "v2p_sidebar_order",
-                    remoteData.sidebarOrder,
-                  );
-                if (remoteData.navCollapsed)
-                  localStorage.setItem(
-                    "v2p_nav_collapsed",
-                    remoteData.navCollapsed,
-                  );
-                if (remoteData.navConfig) {
-                  chrome.storage.local.set({
-                    v2p_nav_config: remoteData.navConfig,
-                  });
-                }
-                resolve(true);
-              } else {
-                reject(new Error("云端文件为空"));
-              }
+    // 持续监听：拦截原生 V2EX 对 theme-color 的可能修改
+    const metaObserver = new MutationObserver(() => {
+        if (syncingThemeMeta) return;
+        const color = getThemeColor();
+        const meta = ensureThemeMeta();
+        if (meta.content !== color) meta.content = color;
+    });
+    const forceThemeColor = () => {
+        syncThemeColor(getThemeColor());
+    };
+
+    // 当主题类发生变化时，主动同步一次
+    const classObserver = new MutationObserver(() => {
+        syncThemeColor(getThemeColor());
+    });
+    classObserver.observe(docEl, {
+        attributes: true,
+        attributeFilter: ["class"],
+    });
+
+    // 监听系统主题变化（auto 模式）
+    if (window.matchMedia) {
+        const mq = window.matchMedia("(prefers-color-scheme: dark)");
+        const onMqChange = () => syncThemeColor(getThemeColor());
+        if (mq.addEventListener) {
+            mq.addEventListener("change", onMqChange);
+        } else if (mq.addListener) {
+            mq.addListener(onMqChange);
+        }
+    }
+
+    // 等待 head 出现后开始监听
+    let currentHead = null;
+    const waitForHead = () => {
+        if (document.head) {
+            if (currentHead !== document.head) {
+                currentHead = document.head;
+            }
+            metaObserver.observe(document.head, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["content"],
+            });
+        } else {
+            requestAnimationFrame(waitForHead);
+        }
+    };
+    waitForHead();
+
+    // 监听 head 变更（某些导航会重建 head）
+    const headSwapObserver = new MutationObserver(() => {
+        if (document.head && document.head !== currentHead) {
+            currentHead = document.head;
+            metaObserver.observe(document.head, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["content"],
+            });
+            forceThemeColor();
+        }
+    });
+    headSwapObserver.observe(docEl, { childList: true, subtree: true });
+
+    // 加载后短时间强制同步，避免地址栏随机回退
+    const burstSync = () => {
+        let count = 0;
+        const id = setInterval(() => {
+            forceThemeColor();
+            count += 1;
+            if (count >= 15) clearInterval(id);
+        }, 200);
+    };
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", burstSync);
+    } else {
+        burstSync();
+    }
+    window.addEventListener("pageshow", burstSync);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") burstSync();
+    });
+
+    // 2. 注入 Loading 遮罩的样式（虽然 html hidden，但 loader 我们可以设为 visible）
+    const loaderStyle = document.createElement("style");
+    loaderStyle.innerHTML = `
+        #v2p-loading-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: ${initBg};
+            z-index: 2147483647;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            visibility: visible !important; /* 强制覆盖父级的 hidden */
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        .v2p-spinner {
+            width: 32px; height: 32px;
+            border: 3px solid ${effectiveMode === "dark" ? "#374151" : "#e5e7eb"};
+            border-top-color: ${effectiveMode === "dark" ? "#adbac7" : "#64748b"};
+            border-radius: 50%;
+            animation: v2p-spin 0.8s linear infinite;
+        }
+        @keyframes v2p-spin { to { transform: rotate(360deg); } }
+    `;
+    docEl.appendChild(loaderStyle);
+
+    // [Fast Path] 2. 注入 Loading 元素
+    const loader = document.createElement("div");
+    loader.id = "v2p-loading-overlay";
+    loader.innerHTML = '<div class="v2p-spinner"></div>';
+    document.documentElement.appendChild(loader);
+
+    // Remove loader when the page is stable
+    const removeLoader = () => {
+        if (loader) loader.remove();
+        if (loaderStyle) loaderStyle.remove();
+
+        // 恢复页面显示：移除所有防闪烁样式并添加加载完成类
+        const antiFlashStyles = document.querySelectorAll("#v2p-anti-flash");
+        antiFlashStyles.forEach((s) => s.remove());
+
+        docEl.classList.add("v2p-loaded");
+        docEl.style.visibility = "visible";
+    };
+
+    // Safety timeout: remove after 2s max just in case
+    setTimeout(removeLoader, 2000);
+
+    // Save for later removal in main execution
+    window.__V2P_REMOVE_LOADER__ = removeLoader;
+
+    // 4. 【插件完全控制主题】建立观察者，阻止 V2EX 原生主题干扰插件设置
+    // 不再自动同步原生主题到插件，而是让插件完全控制主题
+    const observer = new MutationObserver((mutations, obs) => {
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            // 记录原生状态供参考，但不再自动修改用户设置
+            const isNativeDark = wrapper.classList.contains("Night");
+            window.__V2P_NATIVE_NIGHT__ = isNativeDark ? 1 : 0;
+
+            // 插件完全控制主题：根据用户设置来决定是否添加/移除 Night 类
+            // 而不是让原生覆盖插件设置
+            if (currentMode === "dark") {
+                wrapper.classList.add("Night");
+                docEl.classList.add("Night");
             } else {
-              reject(new Error((res && res.error) || "拉取失败"));
+                wrapper.classList.remove("Night");
+                docEl.classList.remove("Night");
             }
-          },
-        );
-      });
-    },
 
-    async testConnection(config) {
-      return new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({ type: "v2p_sync_test", config }, (res) => {
-          if (chrome.runtime.lastError)
-            return reject(new Error(chrome.runtime.lastError.message));
-          if (res && res.ok) resolve(true);
-          else reject(new Error((res && res.error) || "连接失败"));
-        });
-      });
-    },
-  };
-
-  window.V2PSyncManager = V2PSyncManager;
-
-  const v2pShowToast = (message, duration = 3000) => {
-    const existing = document.querySelector(".v2p-toast");
-    if (existing) existing.remove();
-    const toast = document.createElement("div");
-    toast.className = "v2p-toast";
-    toast.textContent = message;
-    const append = () => {
-      document.body.appendChild(toast);
-      if (duration !== 0) {
-        setTimeout(() => toast.remove(), duration);
-      }
-    };
-    if (document.body) {
-      append();
-    } else {
-      const wait = () => {
-        if (document.body) return append();
-        requestAnimationFrame(wait);
-      };
-      wait();
-    }
-  };
-  window.v2pShowToast = v2pShowToast;
-
-  // 前台自动签到
-  const CHECKIN_DATE_KEY = "v2p_checkin_date";
-  const CHECKIN_USER_KEY = "v2p_checkin_user";
-  let checking = false;
-
-  const getUserName = () => {
-    const link = document.querySelector('#Top .tools a[href^="/member/"]');
-    return link ? link.textContent.trim() : null;
-  };
-
-  const alreadyCheckedToday = (username) => {
-    if (!username) return false;
-    const today = new Date().toISOString().split("T")[0];
-    return (
-      localStorage.getItem(CHECKIN_DATE_KEY) === today &&
-      localStorage.getItem(CHECKIN_USER_KEY) === username
-    );
-  };
-
-  const markCheckedToday = (username) => {
-    const today = new Date().toISOString().split("T")[0];
-    localStorage.setItem(CHECKIN_DATE_KEY, today);
-    localStorage.setItem(CHECKIN_USER_KEY, username || "");
-  };
-
-  const extractRedeemUrl = (html) => {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const btn = doc.querySelector('input[value^="领取"]');
-    if (btn) {
-      const onclick = btn.getAttribute("onclick") || "";
-      const match = onclick.match(/'(\/mission\/daily\/redeem\?once=\d+)'/);
-      if (match && match[1]) return match[1];
-    }
-    const match = html.match(/\/mission\/daily\/redeem\?once=\d+/);
-    return match ? match[0] : null;
-  };
-
-  const parseDays = (html) => {
-    const match = html.match(/已连续登[^0-9]*?(\d+)\s*天/);
-    return match ? match[1] : null;
-  };
-
-  const parseCoins = (html) => {
-    const match = html.match(/每日登录奖励\s*(\d+)\s*铜币/);
-    return match ? match[1] : null;
-  };
-
-  const runCheckin = async () => {
-    if (checking) return;
-    const username = getUserName();
-    if (!username) return;
-    if (alreadyCheckedToday(username)) return;
-    checking = true;
-    try {
-      const dailyHtml = await fetch("/mission/daily", {
-        credentials: "include",
-      }).then((r) => r.text());
-      if (!dailyHtml.includes("/signout")) {
-        checking = false;
-        return;
-      }
-      if (
-        dailyHtml.includes("每日登录奖励已领取") ||
-        dailyHtml.includes("已领取")
-      ) {
-        markCheckedToday(username);
-        checking = false;
-        return;
-      }
-      const redeemUrl = extractRedeemUrl(dailyHtml);
-      if (!redeemUrl) {
-        checking = false;
-        return;
-      }
-      const redeemHtml = await fetch(redeemUrl, {
-        credentials: "include",
-      }).then((r) => r.text());
-      const days = parseDays(redeemHtml);
-      markCheckedToday(username);
-
-      let message = "签到成功 · 今日登录奖励已领取";
-      try {
-        const balanceHtml = await fetch("/balance", {
-          credentials: "include",
-        }).then((r) => r.text());
-        const coins = parseCoins(balanceHtml);
-        if (days && coins) message = `连续签到 ${days} 天，本次 ${coins} 铜币`;
-        else if (coins) message = `签到成功 · 本次 ${coins} 铜币`;
-      } catch (e) {}
-
-      v2pShowToast(message);
-    } catch (e) {
-      console.log("V2P: Front-end checkin error", e);
-    } finally {
-      checking = false;
-    }
-  };
-
-  const scheduleCheckin = () => {
-    let retries = 0;
-    const tryRun = () => {
-      if (getUserName()) {
-        runCheckin();
-        return;
-      }
-      retries += 1;
-      if (retries < 10) setTimeout(tryRun, 300);
-    };
-    tryRun();
-  };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", scheduleCheckin);
-  } else {
-    scheduleCheckin();
-  }
-  ("use strict");
-
-  // 想要的头像尺寸上限，自己改，比如 48 / 64 / 96 都行
-  const MAX_GRAVATAR_SIZE = 64;
-
-  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-
-  function getDesiredAvatarSize(img) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = img.clientWidth || 0;
-    const h = img.clientHeight || 0;
-    const base = Math.max(w, h);
-    if (base > 0) {
-      return clamp(Math.ceil(base * dpr), 32, MAX_GRAVATAR_SIZE);
-    }
-    return MAX_GRAVATAR_SIZE;
-  }
-
-  function upgradeAvatar(img) {
-    // 1. 基础检查：必须是图片元素且有 src
-    if (!img || !img.src) return;
-
-    // 2. 防重复处理检查
-    if (img.dataset.v2pProcessed) return;
-
-    // 3. 快速字符串检查，避免不必要的 URL 对象创建
-    // V2EX 头像通常包含 /avatar/ 或 /gravatar/
-    const src = img.src;
-    if (!src.includes("/avatar/") && !src.includes("/gravatar/")) {
-      return;
-    }
-
-    // 标记为已处理，避免重复计算
-    img.dataset.v2pProcessed = "true";
-
-    let url;
-    try {
-      url = new URL(src, location.href);
-    } catch (e) {
-      return;
-    }
-
-    const pathname = url.pathname;
-    const hostname = url.hostname;
-
-    // 4. 处理逻辑
-    // Case A: /avatar/ 路径且带 _normal 的图片 -> 视显示尺寸决定是否升级
-    if (pathname.includes("/avatar/") && pathname.includes("_normal")) {
-      const desired = getDesiredAvatarSize(img);
-      if (desired >= 48) {
-        // 使用字符串替换比正则稍快，且对于这种固定格式足够安全
-        img.src = src.replace("_normal", "_large");
-      }
-      return;
-    }
-
-    // Case B: V2EX 的 gravatar 头像：通过 s=xx 控制尺寸
-    if (hostname.endsWith("v2ex.com") && pathname.includes("/gravatar/")) {
-      const params = url.searchParams;
-      const s = params.get("s");
-
-      if (s) {
-        const curSize = parseInt(s, 10);
-        const desired = getDesiredAvatarSize(img);
-        if (!Number.isNaN(curSize) && curSize < desired) {
-          params.set("s", String(desired));
-          img.src = url.toString();
+            // 检测完成，断开观察，节省性能
+            obs.disconnect();
         }
-      }
-    }
-  }
-
-  function scanAll() {
-    document.querySelectorAll("img.avatar").forEach(scheduleUpgrade);
-  }
-
-  const idle =
-    window.requestIdleCallback ||
-    function (cb) {
-      return setTimeout(cb, 16);
-    };
-
-  const io =
-    "IntersectionObserver" in window
-      ? new IntersectionObserver((entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              io.unobserve(entry.target);
-              idle(() => upgradeAvatar(entry.target));
-            }
-          });
-        })
-      : null;
-
-  function scheduleUpgrade(img) {
-    if (io) {
-      io.observe(img);
-    } else {
-      idle(() => upgradeAvatar(img));
-    }
-  }
-
-  // 首次扫描
-  scanAll();
-
-  // 监听后续动态加载的头像（比如 PJAX / AJAX）
-  const observer = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      if (m.addedNodes.length === 0) continue;
-
-      for (const node of m.addedNodes) {
-        if (node.nodeType !== 1) continue; // 只处理元素节点
-
-        // 检查节点本身
-        if (node.tagName === "IMG" && node.classList.contains("avatar")) {
-          scheduleUpgrade(node);
-        }
-
-        // 检查子节点 (如果插入的是一个容器)
-        if (node.querySelectorAll) {
-          // 使用更具体的选择器，减少遍历范围
-          const avatars = node.querySelectorAll("img.avatar");
-          if (avatars.length > 0) {
-            avatars.forEach(scheduleUpgrade);
-          }
-        }
-      }
-    }
-  });
-
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-  });
-})();
-
-("use strict");
-
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res) =>
-  function __init() {
-    return (fn && (res = (0, fn[__getOwnPropNames(fn)[0]])((fn = 0))), res);
-  };
-
-// src/contents/polyfill.ts
-var init_polyfill = __esm({
-  "src/contents/polyfill.ts"() {
-    "use strict";
-    {
-      if (!window.requestIdleCallback) {
-        window.requestIdleCallback = function (callback) {
-          const start = Date.now();
-          return setTimeout(function () {
-            callback({
-              didTimeout: false,
-              timeRemaining: function () {
-                return Math.max(0, 50 - (Date.now() - start));
-              },
-            });
-          }, 1);
-        };
-      }
-      if (!window.cancelIdleCallback) {
-        window.cancelIdleCallback = function (id) {
-          clearTimeout(id);
-        };
-      }
-    }
-  },
-});
-
-// src/constants.ts
-var EXTENSION_NAME,
-  emojiLinks,
-  emoticons,
-  READABLE_CONTENT_HEIGHT,
-  MAX_CONTENT_HEIGHT,
-  READING_CONTENT_LIMIT,
-  dataExpiryTime,
-  imgurClientIdPool,
-  defaultOptions;
-var init_constants = __esm({
-  "src/constants.ts"() {
-    "use strict";
-    EXTENSION_NAME = "V2EX_Polish";
-    emojiLinks = {
-      // B 站表情。
-      ["[\u8131\u5355doge]" /* 脱单doge */]: {
-        ld: "https://i.imgur.com/L62ZP7V.png",
-        hd: "https://i.imgur.com/3mPhudo.png",
-      },
-      ["[doge]" /* doge */]: {
-        ld: "https://i.imgur.com/agAJ0Rd.png",
-        hd: "https://i.imgur.com/HZL0hOa.png",
-      },
-      ["[\u8FA3\u773C\u775B]" /* 辣眼睛 */]: {
-        ld: "https://i.imgur.com/n119Wvk.png",
-        hd: "https://i.imgur.com/A5WXoZJ.png",
-      },
-      ["[\u7591\u60D1]" /* 疑惑 */]: {
-        ld: "https://i.imgur.com/U3hKhrT.png",
-        hd: "https://i.imgur.com/3gCygBS.png",
-      },
-      ["[\u6342\u8138]" /* 捂脸 */]: {
-        ld: "https://i.imgur.com/14cwgsI.png",
-        hd: "https://i.imgur.com/fLp3t8s.png",
-      },
-      ["[\u54E6\u547C]" /* 哦呼 */]: {
-        ld: "https://i.imgur.com/km62MY2.png",
-        hd: "https://i.imgur.com/CXXgF4E.png",
-      },
-      ["[\u50B2\u5A07]" /* 傲娇 */]: {
-        ld: "https://i.imgur.com/TkdeN49.png",
-        hd: "https://i.imgur.com/m7IlCrD.png",
-      },
-      ["[\u601D\u8003]" /* 思考 */]: {
-        ld: "https://i.imgur.com/MAyk5GN.png",
-        hd: "https://i.imgur.com/eRJTCx7.png",
-      },
-      ["[\u5403\u74DC]" /* 吃瓜 */]: {
-        ld: "https://i.imgur.com/Ug1iMq4.png",
-        hd: "https://i.imgur.com/Gy3nwkC.png",
-      },
-      ["[\u65E0\u8BED]" /* 无语 */]: {
-        ld: "https://i.imgur.com/e1q9ScT.png",
-        hd: "https://i.imgur.com/wMfcBqD.png",
-      },
-      ["[\u5927\u54ED]" /* 大哭 */]: {
-        ld: "https://i.imgur.com/YGIx7lh.png",
-        hd: "https://i.imgur.com/SNHJxtv.png",
-      },
-      ["[\u9178\u4E86]" /* 酸了 */]: {
-        ld: "https://i.imgur.com/5FDsp6L.png",
-        hd: "https://i.imgur.com/wnQBodT.png",
-      },
-      ["[\u6253call]" /* 打call */]: {
-        ld: "https://i.imgur.com/pmNOo2w.png",
-        hd: "https://i.imgur.com/4GfTlV0.png",
-      },
-      ["[\u6B6A\u5634]" /* 歪嘴 */]: {
-        ld: "https://i.imgur.com/XzEYBoY.png",
-        hd: "https://i.imgur.com/84ycU43.png",
-      },
-      ["[\u661F\u661F\u773C]" /* 星星眼 */]: {
-        ld: "https://i.imgur.com/2spsghH.png",
-        hd: "https://i.imgur.com/oEIJRru.png",
-      },
-      ["[OK]" /* OK */]: {
-        ld: "https://i.imgur.com/6DMydmQ.png",
-        hd: "https://i.imgur.com/PE2dyjY.png",
-      },
-      ["[\u8DEA\u4E86]" /* 跪了 */]: {
-        ld: "https://i.imgur.com/TYtySHv.png",
-        hd: "https://i.imgur.com/0pjsMf0.png",
-      },
-      ["[\u54CD\u6307]" /* 响指 */]: {
-        ld: "https://i.imgur.com/Ac88cMm.png",
-        hd: "https://i.imgur.com/nkoevMu.png",
-      },
-      ["[\u8C03\u76AE]" /* 调皮 */]: {
-        ld: "https://i.imgur.com/O6ZZSLk.png",
-        hd: "https://i.imgur.com/ggHTLzH.png",
-      },
-      ["[\u7B11\u54ED]" /* 笑哭 */]: {
-        ld: "https://i.imgur.com/NIvxivj.png",
-        hd: "https://i.imgur.com/h8edr5G.png",
-      },
-      ["[\u55D1\u74DC\u5B50]" /* 嗑瓜子 */]: {
-        ld: "https://i.imgur.com/rjR4rdr.png",
-        hd: "https://i.imgur.com/GMzq0tq.png",
-      },
-      ["[\u559C\u6781\u800C\u6CE3]" /* 喜极而泣 */]: {
-        ld: "https://i.imgur.com/N9E3iZ2.png",
-        hd: "https://i.imgur.com/L1N27tb.png",
-      },
-      ["[\u60CA\u8BB6]" /* 惊讶 */]: {
-        ld: "https://i.imgur.com/aptfuiN.png",
-        hd: "https://i.imgur.com/cuzxGOI.png",
-      },
-      ["[\u7ED9\u5FC3\u5FC3]" /* 给心心 */]: {
-        ld: "https://i.imgur.com/4aXVwxJ.png",
-        hd: "https://i.imgur.com/q663Mor.png",
-      },
-      ["[\u5446]" /* 呆 */]: {
-        ld: "https://i.imgur.com/c1Q76Cd.png",
-        hd: "https://i.imgur.com/xMXlmxm.png",
-      },
-      // 小红薯表情。
-      ["[\u54ED\u60F9R]" /* 哭惹 */]: {
-        ld: "https://i.imgur.com/HgxsUD2.png",
-        hd: "https://i.imgur.com/0aOdQJd.png",
-      },
-      ["[\u54C7R]" /* 哇 */]: {
-        ld: "https://i.imgur.com/OZySWIG.png",
-        hd: "https://i.imgur.com/ngoi2I6.png",
-      },
-      ["[\u6C57\u989CR]" /* 汗颜 */]: {
-        ld: "https://i.imgur.com/jrVZoLi.png",
-        hd: "https://i.imgur.com/O8alqc1.png",
-      },
-      ["[\u5BB3\u7F9ER]" /* 害羞 */]: {
-        ld: "https://i.imgur.com/OVQjxIr.png",
-        hd: "https://i.imgur.com/1PeoVR5.png",
-      },
-      ["[\u840C\u840C\u54D2R]" /* 萌萌哒 */]: {
-        ld: "https://i.imgur.com/Ue1kikn.png",
-        hd: "https://i.imgur.com/vOHzwus.png",
-      },
-      ["[\u5077\u7B11R]" /* 偷笑 */]: {
-        ld: "https://i.imgur.com/aF7QiE5.png",
-        hd: "https://i.imgur.com/WneGpK9.png",
-      },
-      ["[\u4E70\u7206R]" /* 买爆 */]: {
-        ld: "https://i.imgur.com/2JhZFtb.png",
-        hd: "https://i.imgur.com/za9t585.png",
-      },
-      ["[\u8272\u8272R]" /* 色色 */]: {
-        ld: "https://i.imgur.com/ZA1jRv1.png",
-        hd: "https://i.imgur.com/mEGRKJy.png",
-      },
-      ["[\u62A0\u9F3BR]" /* 抠鼻 */]: {
-        ld: "https://i.imgur.com/pYtTFnj.png",
-        hd: "https://i.imgur.com/ErnQrMJ.png",
-      },
-      ["[\u9ED1\u85AF\u95EE\u53F7R]" /* 黑薯问号 */]: {
-        ld: "https://i.imgur.com/aCjmFLD.png",
-        hd: "https://i.imgur.com/i4Wgtyv.png",
-      },
-      ["[\u6276\u5899R]" /* 扶墙 */]: {
-        ld: "https://i.imgur.com/RV7y6tR.png",
-        hd: "https://i.imgur.com/PjhjZsJ.png",
-      },
-      ["[\u9119\u89C6R]" /* 鄙视 */]: {
-        ld: "https://i.imgur.com/LaO5dh3.png",
-        hd: "https://i.imgur.com/StrGaFx.png",
-      },
-      ["[\u8E72R]" /* 蹲 */]: {
-        ld: "https://i.imgur.com/t876WSv.png",
-        hd: "https://i.imgur.com/jdTq0YI.png",
-      },
-      ["[\u5E86\u795DR]" /* 庆祝 */]: {
-        ld: "https://i.imgur.com/wQw2kD0.png",
-        hd: "https://i.imgur.com/lx6jrkm.png",
-      },
-      ["[\u516DR]" /* 六 */]: {
-        ld: "https://i.imgur.com/JqoC4L5.png",
-        hd: "https://i.imgur.com/cUVWKc2.png",
-      },
-      ["[\u53EFR]" /* 可 */]: {
-        ld: "https://i.imgur.com/I70yy88.png",
-        hd: "https://i.imgur.com/nRgXwUT.png",
-      },
-      ["[\u52A0\u4E00R]" /* 加一 */]: {
-        ld: "https://i.imgur.com/hpVvbVh.png",
-        hd: "https://i.imgur.com/abBCCK9.png",
-      },
-    };
-    emoticons = [
-      {
-        title: "\u6D41\u884C",
-        list: [
-          "[\u8131\u5355doge]" /* 脱单doge */,
-          "[doge]" /* doge */,
-          "[\u6253call]" /* 打call */,
-          "[\u661F\u661F\u773C]" /* 星星眼 */,
-          "[\u5403\u74DC]" /* 吃瓜 */,
-          "[OK]" /* OK */,
-          "[\u54E6\u547C]" /* 哦呼 */,
-          "[\u601D\u8003]" /* 思考 */,
-          "[\u7591\u60D1]" /* 疑惑 */,
-          "[\u8FA3\u773C\u775B]" /* 辣眼睛 */,
-          "[\u50B2\u5A07]" /* 傲娇 */,
-          "[\u6342\u8138]" /* 捂脸 */,
-          "[\u65E0\u8BED]" /* 无语 */,
-          "[\u5927\u54ED]" /* 大哭 */,
-          "[\u9178\u4E86]" /* 酸了 */,
-          "[\u6B6A\u5634]" /* 歪嘴 */,
-          "[\u8C03\u76AE]" /* 调皮 */,
-          "[\u7B11\u54ED]" /* 笑哭 */,
-          "[\u55D1\u74DC\u5B50]" /* 嗑瓜子 */,
-          "[\u559C\u6781\u800C\u6CE3]" /* 喜极而泣 */,
-          "[\u60CA\u8BB6]" /* 惊讶 */,
-          "[\u7ED9\u5FC3\u5FC3]" /* 给心心 */,
-          "[\u5446]" /* 呆 */,
-          "[\u8DEA\u4E86]" /* 跪了 */,
-          "[\u54CD\u6307]" /* 响指 */,
-          "[\u54C7R]" /* 哇 */,
-          "[\u840C\u840C\u54D2R]" /* 萌萌哒 */,
-          "[\u5BB3\u7F9ER]" /* 害羞 */,
-          "[\u5077\u7B11R]" /* 偷笑 */,
-          "[\u54ED\u60F9R]" /* 哭惹 */,
-          "[\u6C57\u989CR]" /* 汗颜 */,
-          "[\u8272\u8272R]" /* 色色 */,
-          "[\u62A0\u9F3BR]" /* 抠鼻 */,
-          "[\u9119\u89C6R]" /* 鄙视 */,
-          "[\u4E70\u7206R]" /* 买爆 */,
-          "[\u9ED1\u85AF\u95EE\u53F7R]" /* 黑薯问号 */,
-          "[\u6276\u5899R]" /* 扶墙 */,
-          "[\u8E72R]" /* 蹲 */,
-          "[\u53EFR]" /* 可 */,
-          "[\u516DR]" /* 六 */,
-          "[\u52A0\u4E00R]" /* 加一 */,
-          "[\u5E86\u795DR]" /* 庆祝 */,
-        ],
-      },
-      {
-        title: "\u5C0F\u9EC4\u8138",
-        list: [
-          "\u{1F600}",
-          "\u{1F601}",
-          "\u{1F602}",
-          "\u{1F923}",
-          "\u{1F605}",
-          "\u{1F60A}",
-          "\u{1F60B}",
-          "\u{1F618}",
-          "\u{1F970}",
-          "\u{1F617}",
-          "\u{1F929}",
-          "\u{1F914}",
-          "\u{1F928}",
-          "\u{1F610}",
-          "\u{1F611}",
-          "\u{1F644}",
-          "\u{1F60F}",
-          "\u{1F62A}",
-          "\u{1F62B}",
-          "\u{1F971}",
-          "\u{1F61C}",
-          "\u{1F612}",
-          "\u{1F614}",
-          "\u{1F628}",
-          "\u{1F630}",
-          "\u{1F631}",
-          "\u{1F975}",
-          "\u{1F621}",
-          "\u{1F973}",
-          "\u{1F97A}",
-          "\u{1F92D}",
-          "\u{1F9D0}",
-          "\u{1F60E}",
-          "\u{1F913}",
-          "\u{1F62D}",
-          "\u{1F911}",
-          "\u{1F92E}",
-        ],
-      },
-      {
-        title: "\u624B\u52BF",
-        list: [
-          "\u{1F64B}",
-          "\u{1F64E}",
-          "\u{1F645}",
-          "\u{1F647}",
-          "\u{1F937}",
-          "\u{1F90F}",
-          "\u{1F449}",
-          "\u270C\uFE0F",
-          "\u{1F918}",
-          "\u{1F919}",
-          "\u{1F44C}",
-          "\u{1F90C}",
-          "\u{1F44D}",
-          "\u{1F44E}",
-          "\u{1F44B}",
-          "\u{1F91D}",
-          "\u{1F64F}",
-          "\u{1F44F}",
-        ],
-      },
-      {
-        title: "\u5E86\u795D",
-        list: ["\u2728", "\u{1F389}", "\u{1F38A}"],
-      },
-      {
-        title: "\u5176\u4ED6",
-        list: [
-          "\u{1F47B}",
-          "\u{1F921}",
-          "\u{1F414}",
-          "\u{1F440}",
-          "\u{1F4A9}",
-          "\u{1F434}",
-          "\u{1F984}",
-          "\u{1F427}",
-          "\u{1F436}",
-          "\u{1F412}",
-          "\u{1F648}",
-          "\u{1F649}",
-          "\u{1F64A}",
-          "\u{1F435}",
-        ],
-      },
-    ];
-    READABLE_CONTENT_HEIGHT = 250;
-    MAX_CONTENT_HEIGHT = 550;
-    READING_CONTENT_LIMIT = 150;
-    dataExpiryTime = 60 * 60 * 1e3;
-    imgurClientIdPool = [
-      "3107b9ef8b316f3",
-      // 以下 Client ID 来自「V2EX Plus」
-      "442b04f26eefc8a",
-      "59cfebe717c09e4",
-      "60605aad4a62882",
-      "6c65ab1d3f5452a",
-      "83e123737849aa9",
-      "9311f6be1c10160",
-      "c4a4a563f698595",
-      "81be04b9e4a08ce",
-    ];
-    defaultOptions = {
-      openInNewTab: false,
-      autoCheckIn: {
-        enabled: true,
-      },
-      theme: {
-        autoSwitch: false,
-      },
-      reply: {
-        preload: "off",
-        layout: "vertical",
-      },
-      replyContent: {
-        autoFold: true,
-        hideReplyTime: true,
-        hideRefName: true,
-        showImgInPage: true,
-      },
-      nestedReply: {
-        display: "indent",
-        multipleInsideOne: "nested",
-      },
-      userTag: {
-        display: "inline",
-      },
-      contextMenu: {
-        enabled: true,
-      },
-    };
-  },
-});
-
-// src/icons.ts
-var iconLogo, iconGitHub;
-var init_icons = __esm({
-  "src/icons.ts"() {
-    "use strict";
-    iconLogo = `
-<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 88 88"><g style="mix-blend-mode:passthrough"><path d="M87.92 86.098v-.052a.592.592 0 0 0 0-.07L44.978.72l-.059-.105c-.16-.3-.415-.511-.705-.586a.961.961 0 0 0-.841.19 1.315 1.315 0 0 0-.336.378l-.058.115a2571.004 2571.004 0 0 1-8.695 17.172c-.59 1.024-.59 2.382 0 3.406 3.856 7.57 7.7 15.142 11.532 22.718.641 1.108.641 2.58 0 3.688C39.5 60.23 32.826 73.406 26.45 85.993c-.291.661-.086 1.482.46 1.84.16.104.341.158.525.158h18.52c.415.003.797-.272.992-.713l.635-1.285 8.585-17.023c.142-.317.383-.552.67-.653a.949.949 0 0 1 .855.116c.156.1.289.245.386.423l8.506 16.723.787 1.558c.199.433.575.702.985.704h.518c.087.009.175.009.263 0h17.74c.617 0 1.119-.601 1.123-1.347a1.615 1.615 0 0 0-.08-.396Z" fill="currentColor" style="mix-blend-mode:passthrough"/><path d="m38.551 48.541.62-1.232a3.095 3.095 0 0 0 0-3.02l-3.807-7.446-4.377-8.511c-.155-.308-.406-.527-.697-.61a.957.957 0 0 0-.85.17 1.252 1.252 0 0 0-.4.502L.132 86.002c-.29.658-.085 1.477.46 1.83.161.113.345.17.532.168h16.981c.41 0 .788-.27.985-.705l.65-1.302c.029-.048.055-.098.08-.15l.729-1.408c6.047-12.103 11.839-23.66 17.9-35.7.038-.062.072-.127.102-.194Z" fill="currentColor" style="mix-blend-mode:passthrough"/></g></svg>
-`;
-    iconGitHub = `
-<svg viewBox="0 0 24 24" aria-hidden="true">
-  <path fill="currentColor" clip-rule="evenodd" d="M12 2C6.477 2 2 6.463 2 11.97c0 4.404 2.865 8.14 6.839 9.458.5.092.682-.216.682-.48 0-.236-.008-.864-.013-1.695-2.782.602-3.369-1.337-3.369-1.337-.454-1.151-1.11-1.458-1.11-1.458-.908-.618.069-.606.069-.606 1.003.07 1.531 1.027 1.531 1.027.892 1.524 2.341 1.084 2.91.828.092-.643.35-1.083.636-1.332-2.22-.251-4.555-1.107-4.555-4.927 0-1.088.39-1.979 1.029-2.675-.103-.252-.446-1.266.098-2.638 0 0 .84-.268 2.75 1.022A9.607 9.607 0 0 1 12 6.82c.85.004 1.705.114 2.504.336 1.909-1.29 2.747-1.022 2.747-1.022.546 1.372.202 2.386.1 2.638.64.696 1.028 1.587 1.028 2.675 0 3.83-2.339 4.673-4.566 4.92.359.307.678.915.678 1.846 0 1.332-.012 2.407-.012 2.734 0 .267.18.577.688.48 3.97-1.32 6.833-5.054 6.833-9.458C22 6.463 17.522 2 12 2Z"></path>
-</svg>
-`;
-  },
-});
-
-// src/utils.ts
-function getOS() {
-  const userAgent = window.navigator.userAgent.toLowerCase();
-  const macosPlatforms = /(macintosh|macintel|macppc|mac68k|macos)/i;
-  const windowsPlatforms = /(win32|win64|windows|wince)/i;
-  const iosPlatforms = /(iphone|ipad|ipod)/i;
-  let os = null;
-  if (macosPlatforms.test(userAgent)) {
-    os = "macos";
-  } else if (iosPlatforms.test(userAgent)) {
-    os = "ios";
-  } else if (windowsPlatforms.test(userAgent)) {
-    os = "windows";
-  } else if (userAgent.includes("android")) {
-    os = "android";
-  } else if (userAgent.includes("linux")) {
-    os = "linux";
-  }
-  return os;
-}
-function formatTimestamp(timestamp, { format = "YMD" } = {}) {
-  const date = new Date(
-    timestamp.toString().length === 10 ? timestamp * 1e3 : timestamp,
-  );
-  const year = date.getFullYear().toString();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  const YMD = `${year}-${month}-${day}`;
-  if (format === "YMDHM") {
-    const hour = date.getHours().toString().padStart(2, "0");
-    const minute = date.getMinutes().toString().padStart(2, "0");
-    return `${YMD} ${hour}:${minute}`;
-  }
-  if (format === "YMDHMS") {
-    const hour = date.getHours().toString().padStart(2, "0");
-    const minute = date.getMinutes().toString().padStart(2, "0");
-    const second = date.getSeconds().toString().padStart(2, "0");
-    return `${YMD} ${hour}:${minute}:${second}`;
-  }
-  return YMD;
-}
-function isSameDay(timestamp1, timestamp2) {
-  const date1 = new Date(timestamp1);
-  const date2 = new Date(timestamp2);
-  return (
-    date1.getFullYear() === date2.getFullYear() &&
-    date1.getMonth() === date2.getMonth() &&
-    date1.getDate() === date2.getDate()
-  );
-}
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function deepMerge(target, source) {
-  const result = {};
-  for (const key in target) {
-    const targetProp = target[key];
-    const sourceProp = source[key];
-    if (isObject(targetProp) && isObject(sourceProp)) {
-      result[key] = deepMerge(targetProp, sourceProp);
-    } else if (Reflect.has(source, key)) {
-      result[key] = sourceProp;
-    } else {
-      result[key] = targetProp;
-    }
-  }
-  for (const key in source) {
-    if (!Reflect.has(target, key)) {
-      result[key] = source[key];
-    }
-  }
-  return result;
-}
-function getRunEnv() {
-  if (typeof chrome === "object" && typeof chrome.extension !== "undefined") {
-    return "chrome";
-  }
-  if (typeof browser === "object" && typeof browser.extension !== "undefined") {
-    return "web-ext";
-  }
-  return null;
-}
-function isBrowserExtension() {
-  return false;
-}
-function escapeHTML(htmlString) {
-  return htmlString.replace(/[<>&"'']/g, (match) => {
-    switch (match) {
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case "&":
-        return "&amp;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return match;
-    }
-  });
-}
-function injectScript(scriptSrc) {
-  const script = document.createElement("script");
-  script.setAttribute("type", "text/javascript");
-  script.setAttribute("src", scriptSrc);
-  document.body.appendChild(script);
-}
-function isValidSettings(settings) {
-  return (
-    !!settings &&
-    typeof settings === "object" &&
-    "options" /* Options */ in settings
-  );
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function getV2P_Settings() {
-  let noteId;
-  {
-    const res = await fetch(`${V2EX_ORIGIN}/notes`);
-    const htmlText = await res.text();
-    const $page = $(htmlText);
-    const $note = $page.find(
-      '.note_item > .note_item_title > a[href^="/notes"]',
-    );
-    $note.each((_, dom) => {
-      const $dom = $(dom);
-      if ($dom.text().startsWith(mark)) {
-        const href = $dom.attr("href");
-        if (typeof href === "string") {
-          const id = href.split("/").at(2);
-          noteId = id;
-        }
-        return false;
-      }
     });
-  }
-  if (noteId) {
-    const res = await fetch(`${V2EX_ORIGIN}/notes/edit/${noteId}`);
-    const htmlText = await res.text();
-    const $editor = $(htmlText).find("#note_content.note_editor");
-    const value = $editor.val();
-    if (typeof value === "string") {
-      const syncSettings = JSON.parse(value.replace(mark, ""));
-      if (isValidSettings(syncSettings)) {
-        return { noteId, config: syncSettings };
-      }
-    }
-  }
-}
-async function setV2P_Settings(storageSettings, signal) {
-  const data = await getV2P_Settings();
-  const updating = !!data;
-  const formData = new FormData();
-  const syncVersion = updating
-    ? data.config["settings-sync" /* SyncInfo */].version + 1
-    : 1;
-  const syncInfo = {
-    version: syncVersion,
-    lastSyncTime: Date.now(),
-  };
-  formData.append(
-    "content",
-    mark +
-      JSON.stringify({
-        ...storageSettings,
-        ["settings-sync" /* SyncInfo */]: syncInfo,
-      }),
-  );
-  formData.append("syntax", "0");
-  if (updating) {
-    const { noteId } = data;
-    await fetch(`${V2EX_ORIGIN}/notes/edit/${noteId}`, {
-      method: "POST",
-      body: formData,
-      signal,
-    });
-  } else {
-    formData.append("parent_id", "0");
-    await fetch(`${V2EX_ORIGIN}/notes/new`, {
-      method: "POST",
-      body: formData,
-      signal,
-    });
-  }
-  await setStorage("settings-sync" /* SyncInfo */, syncInfo);
-  return syncInfo;
-}
-function getStorage(useCache = true) {
-  return new Promise((resolve, reject) => {
-    if (useCache) {
-      if (window.__V2P_StorageCache) {
-        resolve(window.__V2P_StorageCache);
-      }
-    }
-    if (!isBrowserExtension()) {
-      const data = { ["options" /* Options */]: defaultOptions };
-      if (typeof window !== "undefined") {
-        window.__V2P_StorageCache = data;
-      }
-      resolve(data);
-    }
-  });
-}
-function getStorageSync() {
-  const storage = window.__V2P_StorageCache;
-  if (!storage) {
-    throw new Error(
-      `${EXTENSION_NAME}: \u65E0\u53EF\u7528\u7684 Storage \u7F13\u5B58\u6570\u636E`,
-    );
-  }
-  return storage;
-}
-async function setStorage(storageKey, storageItem) {
-  switch (storageKey) {
-    case "options" /* Options */:
-    case "api" /* API */:
-    case "daily" /* Daily */:
-    case "settings-sync" /* SyncInfo */:
-    case "reading-list" /* ReadingList */:
-      try {
-        // await chrome.storage.sync.set({ [storageKey]: storageItem });
-        if (
-          storageKey !== "api" /* API */ &&
-          storageKey !== "settings-sync" /* SyncInfo */ &&
-          typeof $ !== "undefined"
-        ) {
-          const settings = await getStorage(false);
-          if (controller) {
-            controller.abort();
-          }
-          controller = new AbortController();
-          setV2P_Settings(settings, controller.signal);
-        }
-      } catch (err) {
-        if (String(err).includes("QUOTA_BYTES_PER_ITEM quota exceeded")) {
-          console.error(
-            `${EXTENSION_NAME}: \u65E0\u6CD5\u8BBE\u7F6E ${storageKey}\uFF0C \u5355\u4E2A item \u4E0D\u80FD\u8D85\u51FA 8 KB\uFF0C\u8BE6\u60C5\u67E5\u770B\uFF1Ahttps://developer.chrome.com/docs/extensions/reference/storage/#storage-areas`,
-          );
-        }
-        console.error(err);
-        throw new Error(`\u274C \u65E0\u6CD5\u8BBE\u7F6E\uFF1A${storageKey}`);
-      }
-      break;
-    default:
-      throw new Error(`\u672A\u77E5\u7684 storageKey\uFF1A ${storageKey}`);
-  }
-}
-var V2EX_ORIGIN, mark, controller;
-var init_utils = __esm({
-  "src/utils.ts"() {
-    "use strict";
-    init_constants();
-    V2EX_ORIGIN =
-      typeof window !== "undefined" &&
-      window.location.origin.includes("v2ex.com")
-        ? window.location.origin
-        : "https://www.v2ex.com" /* Origin */;
-    mark = `${EXTENSION_NAME}_settings`;
-    controller = null;
-  },
-});
 
-// src/contents/globals.ts
-function updateCommentCells() {
-  $commentCells = $commentBox.find('.cell[id^="r_"]');
-  $commentTableRows = $commentCells.find("> table > tbody > tr");
-}
-var $body,
-  $wrapper,
-  $wrapperContent,
-  $main,
-  $topicList,
-  $infoCard,
-  $topicContentBox,
-  $topicHeader,
-  $commentBox,
-  $commentCells,
-  $commentTableRows,
-  $replyBox,
-  $replyForm,
-  $replyTextArea,
-  replyTextArea,
-  loginName,
-  topicOwnerName,
-  pathTopicId;
-var init_globals = __esm({
-  "src/contents/globals.ts"() {
-    "use strict";
-    $body = $(document.body);
-    $wrapper = $("#Wrapper");
-    $wrapperContent = $wrapper.find("> .content");
-    $main = $("#Main");
-    $topicList = $(
-      "#Main #Tabs ~ .cell.item, #Main #TopicsNode > .cell, #Main .cell.item:has(.item_title > .topic-link)",
-    );
-    $infoCard = $('#Rightbar > .box:has("#member-activity")');
-    // 主题内容区域
-    $topicContentBox = $("#Main .box:has(.topic_buttons)");
-    if ($topicContentBox.length === 0) {
-      // 移动端 / 特殊布局兜底：不依赖 #Main
-      $topicContentBox = $(".box:has(.topic_buttons)");
-    }
-    $topicHeader = $topicContentBox.find(".header");
-
-    // 评论列表区域
-    $commentBox = $('#Main .box:has(.cell[id^="r_"])');
-    if ($commentBox.length === 0) {
-      // 移动端兜底：不依赖 #Main
-      $commentBox = $('.box:has(.cell[id^="r_"])');
-    }
-    $commentCells = $commentBox.find('.cell[id^="r_"]');
-    $commentTableRows = $commentCells.find("> table > tbody > tr");
-    $replyBox = $("#reply-box");
-    $replyForm = $replyBox.find('form[action^="/t"]');
-    $replyTextArea = $("#reply_content");
-    replyTextArea = document.querySelector("#reply_content");
-    loginName = $('#Top .tools > a[href^="/member"]').text();
-    topicOwnerName = $topicHeader.find('> small > a[href^="/member"]').text();
-    pathTopicId = window.location.pathname.match(/\/t\/(\d+)/)?.at(1);
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/createElement.js
-var createElement, createElement$1;
-var init_createElement = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/createElement.js"() {
-    "use strict";
-    createElement = (tag, attrs, children = []) => {
-      const element = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        tag,
-      );
-      Object.keys(attrs).forEach((name) => {
-        element.setAttribute(name, String(attrs[name]));
-      });
-      if (children.length) {
-        children.forEach((child) => {
-          const childElement = createElement(...child);
-          element.appendChild(childElement);
-        });
-      }
-      return element;
-    };
-    createElement$1 = ([tag, attrs, children]) =>
-      createElement(tag, attrs, children);
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/replaceElement.js
-var getAttrs, getClassNames, combineClassNames, toPascalCase, replaceElement;
-var init_replaceElement = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/replaceElement.js"() {
-    "use strict";
-    init_createElement();
-    getAttrs = (element) =>
-      Array.from(element.attributes).reduce((attrs, attr) => {
-        attrs[attr.name] = attr.value;
-        return attrs;
-      }, {});
-    getClassNames = (attrs) => {
-      if (typeof attrs === "string") return attrs;
-      if (!attrs || !attrs.class) return "";
-      if (attrs.class && typeof attrs.class === "string") {
-        return attrs.class.split(" ");
-      }
-      if (attrs.class && Array.isArray(attrs.class)) {
-        return attrs.class;
-      }
-      return "";
-    };
-    combineClassNames = (arrayOfClassnames) => {
-      const classNameArray = arrayOfClassnames.flatMap(getClassNames);
-      return classNameArray
-        .map((classItem) => classItem.trim())
-        .filter(Boolean)
-        .filter((value, index, self) => self.indexOf(value) === index)
-        .join(" ");
-    };
-    toPascalCase = (string) =>
-      string.replace(
-        /(\w)(\w*)(_|-|\s*)/g,
-        (g0, g1, g2) => g1.toUpperCase() + g2.toLowerCase(),
-      );
-    replaceElement = (element, { nameAttr, icons, attrs }) => {
-      const iconName = element.getAttribute(nameAttr);
-      if (iconName == null) return;
-      const ComponentName = toPascalCase(iconName);
-      const iconNode = icons[ComponentName];
-      if (!iconNode) {
-        return;
-      }
-      const elementAttrs = getAttrs(element);
-      const [tag, iconAttributes, children] = iconNode;
-      const iconAttrs = {
-        ...iconAttributes,
-        "data-lucide": iconName,
-        ...attrs,
-        ...elementAttrs,
-      };
-      const classNames = combineClassNames([
-        "lucide",
-        `lucide-${iconName}`,
-        elementAttrs,
-        attrs,
-      ]);
-      if (classNames) {
-        Object.assign(iconAttrs, {
-          class: classNames,
-        });
-      }
-      const svgElement = createElement$1([tag, iconAttrs, children]);
-      return element.parentNode?.replaceChild(svgElement, element);
-    };
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/defaultAttributes.js
-var defaultAttributes;
-var init_defaultAttributes = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/defaultAttributes.js"() {
-    "use strict";
-    defaultAttributes = {
-      xmlns: "http://www.w3.org/2000/svg",
-      width: 24,
-      height: 24,
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": 2,
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-    };
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/book-open-check.js
-var BookOpenCheck;
-var init_book_open_check = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/book-open-check.js"() {
-    "use strict";
-    init_defaultAttributes();
-    BookOpenCheck = [
-      "svg",
-      defaultAttributes,
-      [
-        ["path", { d: "M12 21V7" }],
-        ["path", { d: "m16 12 2 2 4-4" }],
-        [
-          "path",
-          {
-            d: "M22 6V4a1 1 0 0 0-1-1h-5a4 4 0 0 0-4 4 4 4 0 0 0-4-4H3a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h6a3 3 0 0 1 3 3 3 3 0 0 1 3-3h6a1 1 0 0 0 1-1v-1.3",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/chevron-down.js
-var ChevronDown;
-var init_chevron_down = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/chevron-down.js"() {
-    "use strict";
-    init_defaultAttributes();
-    ChevronDown = ["svg", defaultAttributes, [["path", { d: "m6 9 6 6 6-6" }]]];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/chevrons-up.js
-var ChevronsUp;
-var init_chevrons_up = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/chevrons-up.js"() {
-    "use strict";
-    init_defaultAttributes();
-    ChevronsUp = [
-      "svg",
-      defaultAttributes,
-      [
-        ["path", { d: "m17 11-5-5-5 5" }],
-        ["path", { d: "m17 18-5-5-5 5" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/eye-off.js
-var EyeOff;
-var init_eye_off = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/eye-off.js"() {
-    "use strict";
-    init_defaultAttributes();
-    EyeOff = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49",
-          },
-        ],
-        ["path", { d: "M14.084 14.158a3 3 0 0 1-4.242-4.242" }],
-        [
-          "path",
-          {
-            d: "M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143",
-          },
-        ],
-        ["path", { d: "m2 2 20 20" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/heart.js
-var Heart;
-var init_heart = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/heart.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Heart = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/house.js
-var House;
-var init_house = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/house.js"() {
-    "use strict";
-    init_defaultAttributes();
-    House = [
-      "svg",
-      defaultAttributes,
-      [
-        ["path", { d: "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" }],
-        [
-          "path",
-          {
-            d: "M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/message-square-plus.js
-var MessageSquarePlus;
-var init_message_square_plus = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/message-square-plus.js"() {
-    "use strict";
-    init_defaultAttributes();
-    MessageSquarePlus = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-          },
-        ],
-        ["path", { d: "M12 7v6" }],
-        ["path", { d: "M9 10h6" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/message-square.js
-var MessageSquare;
-var init_message_square = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/message-square.js"() {
-    "use strict";
-    init_defaultAttributes();
-    MessageSquare = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/moon.js
-var Moon;
-var init_moon = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/moon.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Moon = [
-      "svg",
-      defaultAttributes,
-      [["path", { d: "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" }]],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/package-plus.js
-var PackagePlus;
-var init_package_plus = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/package-plus.js"() {
-    "use strict";
-    init_defaultAttributes();
-    PackagePlus = [
-      "svg",
-      defaultAttributes,
-      [
-        ["path", { d: "M16 16h6" }],
-        ["path", { d: "M19 13v6" }],
-        [
-          "path",
-          {
-            d: "M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14",
-          },
-        ],
-        ["path", { d: "m7.5 4.27 9 5.15" }],
-        ["polyline", { points: "3.29 7 12 12 20.71 7" }],
-        ["line", { x1: "12", x2: "12", y1: "22", y2: "12" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/panel-right.js
-var PanelRight;
-var init_panel_right = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/panel-right.js"() {
-    "use strict";
-    init_defaultAttributes();
-    PanelRight = [
-      "svg",
-      defaultAttributes,
-      [
-        ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
-        ["path", { d: "M15 3v18" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/panel-top.js
-var PanelTop;
-var init_panel_top = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/panel-top.js"() {
-    "use strict";
-    init_defaultAttributes();
-    PanelTop = [
-      "svg",
-      defaultAttributes,
-      [
-        ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
-        ["path", { d: "M3 9h18" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/smile.js
-var Smile;
-var init_smile = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/smile.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Smile = [
-      "svg",
-      defaultAttributes,
-      [
-        ["circle", { cx: "12", cy: "12", r: "10" }],
-        ["path", { d: "M8 14s1.5 2 4 2 4-2 4-2" }],
-        ["line", { x1: "9", x2: "9.01", y1: "9", y2: "9" }],
-        ["line", { x1: "15", x2: "15.01", y1: "9", y2: "9" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/square-arrow-up-right.js
-var SquareArrowUpRight;
-var init_square_arrow_up_right = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/square-arrow-up-right.js"() {
-    "use strict";
-    init_defaultAttributes();
-    SquareArrowUpRight = [
-      "svg",
-      defaultAttributes,
-      [
-        ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
-        ["path", { d: "M8 8h8v8" }],
-        ["path", { d: "m8 16 8-8" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/star.js
-var Star;
-var init_star = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/star.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Star = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "polygon",
-          {
-            points:
-              "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/sun.js
-var Sun;
-var init_sun = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/sun.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Sun = [
-      "svg",
-      defaultAttributes,
-      [
-        ["circle", { cx: "12", cy: "12", r: "4" }],
-        ["path", { d: "M12 2v2" }],
-        ["path", { d: "M12 20v2" }],
-        ["path", { d: "m4.93 4.93 1.41 1.41" }],
-        ["path", { d: "m17.66 17.66 1.41 1.41" }],
-        ["path", { d: "M2 12h2" }],
-        ["path", { d: "M20 12h2" }],
-        ["path", { d: "m6.34 17.66-1.41 1.41" }],
-        ["path", { d: "m19.07 4.93-1.41 1.41" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/twitter.js
-var Twitter;
-var init_twitter = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/twitter.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Twitter = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/image.js
-var Image;
-var init_image = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/image.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Image = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "rect",
-          { width: "18", height: "18", x: "3", y: "3", rx: "2", ry: "2" },
-        ],
-        ["circle", { cx: "8.5", cy: "8.5", r: "1.5" }],
-        ["polyline", { points: "21 15 16 10 5 21" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/file-text.js
-var FileText;
-var init_file_text = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/file-text.js"() {
-    "use strict";
-    init_defaultAttributes();
-    FileText = [
-      "svg",
-      defaultAttributes,
-      [
-        [
-          "path",
-          {
-            d: "M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z",
-          },
-        ],
-        ["polyline", { points: "14 2 14 8 20 8" }],
-        ["line", { x1: "16", x2: "8", y1: "13", y2: "13" }],
-        ["line", { x1: "16", x2: "8", y1: "17", y2: "17" }],
-        ["line", { x1: "10", x2: "8", y1: "9", y2: "9" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/globe.js
-var Globe;
-var init_globe = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/globe.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Globe = [
-      "svg",
-      defaultAttributes,
-      [
-        ["circle", { cx: "12", cy: "12", r: "10" }],
-        ["line", { x1: "2", x2: "22", y1: "12", y2: "12" }],
-        [
-          "path",
-          {
-            d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z",
-          },
-        ],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/clock.js
-var Clock;
-var init_clock = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/icons/clock.js"() {
-    "use strict";
-    init_defaultAttributes();
-    Clock = [
-      "svg",
-      defaultAttributes,
-      [
-        ["circle", { cx: "12", cy: "12", r: "10" }],
-        ["polyline", { points: "12 6 12 12 16 14" }],
-      ],
-    ];
-  },
-});
-
-// node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/lucide.js
-var createIcons;
-var init_lucide = __esm({
-  "node_modules/.pnpm/lucide@0.445.0/node_modules/lucide/dist/esm/lucide.js"() {
-    "use strict";
-    init_replaceElement();
-    init_createElement();
-    init_book_open_check();
-    init_chevron_down();
-    init_chevrons_up();
-    init_eye_off();
-    init_heart();
-    init_house();
-    init_message_square_plus();
-    init_message_square();
-    init_moon();
-    init_package_plus();
-    init_panel_right();
-    init_panel_top();
-    init_smile();
-    init_square_arrow_up_right();
-    init_star();
-    init_sun();
-    init_twitter();
-    init_image();
-    init_file_text();
-    init_globe();
-    init_clock();
-    createIcons = ({
-      icons = {},
-      nameAttr = "data-lucide",
-      attrs = {},
-    } = {}) => {
-      if (!Object.values(icons).length) {
-        throw new Error(
-          "Please provide an icons object.\nIf you want to use all the icons you can import it like:\n `import { createIcons, icons } from 'lucide';\nlucide.createIcons({icons});`",
-        );
-      }
-      if (typeof document === "undefined") {
-        throw new Error("`createIcons()` only works in a browser environment.");
-      }
-      const elementsToReplace = document.querySelectorAll(`[${nameAttr}]`);
-      Array.from(elementsToReplace).forEach((element) =>
-        replaceElement(element, { nameAttr, icons, attrs }),
-      );
-      if (nameAttr === "data-lucide") {
-        const deprecatedElements = document.querySelectorAll("[icon-name]");
-        if (deprecatedElements.length > 0) {
-          Array.from(deprecatedElements).forEach((element) =>
-            replaceElement(element, { nameAttr: "icon-name", icons, attrs }),
-          );
-        }
-      }
-    };
-  },
-});
-
-// src/components/toast.ts
-function createToast(props) {
-  const { message, duration = 3e3 } = props;
-  const $existTosat = $(".v2p-toast");
-  if ($existTosat.length > 0) {
-    $existTosat.remove();
-  }
-  const $toast = $(`<div class="v2p-toast">${message}</div>`).hide();
-  $body.append($toast);
-  $toast.fadeIn("fast");
-  if (duration !== 0) {
-    setTimeout(() => {
-      $toast.fadeOut("fast", () => {
-        $toast.remove();
-      });
-    }, duration);
-  }
-  return {
-    clear() {
-      $toast.remove();
-    },
-  };
-}
-var init_toast = __esm({
-  "src/components/toast.ts"() {
-    "use strict";
-    init_globals();
-  },
-});
-
-// src/contents/helpers.ts
-function focusReplyInput() {
-  if (replyTextArea instanceof HTMLTextAreaElement) {
-    replyTextArea.focus();
-  }
-}
-function insertTextToReplyInput(text) {
-  if (replyTextArea instanceof HTMLTextAreaElement) {
-    const startPos = replyTextArea.selectionStart;
-    const endPos = replyTextArea.selectionEnd;
-    const valueToStart = replyTextArea.value.substring(0, startPos);
-    const valueFromEnd = replyTextArea.value.substring(
-      endPos,
-      replyTextArea.value.length,
-    );
-    replyTextArea.value = `${valueToStart}${text}${valueFromEnd}`;
-    focusReplyInput();
-    replyTextArea.selectionStart = replyTextArea.selectionEnd =
-      startPos + text.length;
-  }
-}
-
-async function addToReadingList(params) {}
-function customEscape(str) {
-  return str.replace(
-    /[^a-zA-Z0-9_.!~*'()-]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
-  );
-}
-function decodeBase64TopicPage() {
-  const dataTitle = "\u70B9\u51FB\u590D\u5236";
-  if (window.__V2P_DecodeStatus === "decodeed") {
-    createToast({
-      message:
-        "\u5DF2\u89E3\u6790\u5B8C\u672C\u9875\u6240\u6709\u7684 Base64 \u5B57\u7B26\u4E32",
-    });
-  } else {
-    const $topicContentBox2 = $("#Main .box:has(.topic_content)");
-    const $commentBox2 = $('#Main .box:has(.cell[id^="r_"])');
-    const $commentCells2 = $commentBox2.find('.cell[id^="r_"]');
-    let count = 0;
-    const excludeList = [
-      "boss",
-      "bilibili",
-      "Bilibili",
-      "Encrypto",
-      "encrypto",
-      "Window10",
-      "airpords",
-      "Windows7",
-    ];
-    const convertHTMLText = (text, excludeTextList) => {
-      if (text.length % 4 !== 0 || text.length <= 8) {
-        return text;
-      }
-      if (excludeList.includes(text)) {
-        return text;
-      }
-      if (text.includes("=")) {
-        const paddingIndex = text.indexOf("=");
-        if (
-          paddingIndex !== text.length - 1 &&
-          paddingIndex !== text.length - 2
-        ) {
-          return text;
-        }
-      }
-      if (excludeTextList?.some((excludeText) => excludeText.includes(text))) {
-        return text;
-      }
-      try {
-        const decodedStr = decodeURIComponent(customEscape(window.atob(text)));
-        count += 1;
-        return `${text}<span class="v2p-decode-block">(<ins class="v2p-decode" data-title="${dataTitle}">${decodedStr}</ins>)</span>`;
-      } catch (err) {
-        if (err instanceof Error) {
-          console.error(`\u89E3\u6790 Base64 \u51FA\u9519\uFF1A${err.message}`);
-        }
-        return text;
-      }
-    };
-    const base64regex = /[A-z0-9+/=]+/g;
-    const contentHandler = (_, content) => {
-      const excludeTextList = [
-        ...content.getElementsByTagName("a"),
-        ...content.getElementsByTagName("img"),
-      ].map((ele) => ele.outerHTML);
-      content.innerHTML = content.innerHTML.replace(base64regex, (htmlText) =>
-        convertHTMLText(htmlText, excludeTextList),
-      );
-    };
-    $commentCells2.find(".reply_content").each(contentHandler);
-    $topicContentBox2.find(".topic_content").each(contentHandler);
-    if (count === 0) {
-      createToast({
-        message: "\u672C\u9875\u672A\u53D1\u73B0 Base64 \u5B57\u7B26\u4E32",
-      });
-    } else {
-      window.__V2P_DecodeStatus = "decodeed";
-      createToast({
-        message: `\u2705 \u5DF2\u89E3\u6790\u672C\u9875\u6240\u6709\u7684 Base64 \u5B57\u7B26\u4E32\uFF0C\u5171 ${count} \u6761`,
-      });
-    }
-    $(".v2p-decode").on("click", (ev) => {
-      const text = ev.target.innerText;
-      void navigator.clipboard.writeText(text).then(() => {
-        ev.target.dataset.title = "\u2705 \u5DF2\u590D\u5236";
-        setTimeout(() => {
-          ev.target.dataset.title = dataTitle;
-        }, 1e3);
-      });
-    });
-  }
-}
-function postTask(expression, callback) {
-  if (!isBrowserExtension()) {
-    const result = Function(`"use strict"; ${expression}`)();
-    callback?.(result);
-  } else {
-    if (callback) {
-      if (window.__V2P_Tasks) {
-        window.__V2P_Tasks.set(Date.now(), callback);
-      } else {
-        window.__V2P_Tasks = /* @__PURE__ */ new Map([[Date.now(), callback]]);
-      }
-    }
-    const messageData = {
-      from: 0 /* Content */,
-      payload: { task: { id: Date.now(), expression } },
-    };
-    window.postMessage(messageData);
-  }
-}
-function loadIcons() {
-  setTimeout(() => {
-    createIcons({
-      attrs: {
-        width: "100%",
-        height: "100%",
-      },
-      icons: {
-        MessageSquarePlus,
-        MessageSquare,
-        BookOpenCheck,
-        ChevronsUp,
-        Heart,
-        EyeOff,
-        Sun,
-        Moon,
-        Smile,
-        PackagePlus,
-        Star,
-        Twitter,
-        ChevronDown,
-        ArrowUpRightSquare: SquareArrowUpRight,
-        House,
-        Image,
-        FileText,
-        Globe,
-        Clock,
-      },
-    });
-  }, 0);
-}
-function transformEmoji(textValue) {
-  return textValue.replace(/\[[^\]]+\]/g, (x) => {
-    if (Object.hasOwn(emojiLinks, x)) {
-      const emojiLink = emojiLinks[x].ld;
-      if (typeof emojiLink === "string") {
-        return `${emojiLink} `;
-      }
-    }
-    return x;
-  });
-}
-function getTagsText(tags) {
-  return tags.map((it) => it.name).join("\uFF0C");
-}
-
-function replaceEmojiWithHD($emojiImgs) {
-  if ($emojiImgs.length > 0) {
-    const srcMap = /* @__PURE__ */ new Map();
-    Object.values(emojiLinks).forEach(({ ld, hd }) => {
-      srcMap.set(ld, hd);
-    });
-    $emojiImgs.each((_, img) => {
-      const $img = $(img);
-      const src = $img.attr("src");
-      if (typeof src === "string") {
-        const hd = srcMap.get(src);
-        if (typeof hd === "string") {
-          $img.attr("src", hd);
-          $img.css({
-            width: "var(--v2p-emoji-size)",
-            height: "var(--v2p-emoji-size)",
-          });
-        }
-      }
-    });
-  }
-}
-function replaceCommentEmojiWithHD($cells = $commentCells) {
-  const srcMap = /* @__PURE__ */ new Map();
-  Object.values(emojiLinks).forEach(({ ld, hd }) => {
-    srcMap.set(ld, hd);
-  });
-  const $embedImages = $cells.find(
-    `.reply_content .embedded_image, .payload .embedded_image`,
-  );
-  if ($embedImages.length > 0) {
-    replaceEmojiWithHD($embedImages);
-  }
-}
-
-function getRegisterDays(created) {
-  const registerDays = Math.ceil((Date.now() / 1e3 - created) / (60 * 60 * 24));
-  return registerDays;
-}
-var init_helpers = __esm({
-  "src/contents/helpers.ts"() {
-    "use strict";
-    init_lucide();
-    init_toast();
-    init_constants();
-    init_utils();
-    init_globals();
-  },
-});
-
-// src/contents/common.ts
-var common_exports = {};
-var init_common = __esm({
-  "src/contents/common.ts"() {
-    "use strict";
-    init_polyfill();
-    init_constants();
-    init_icons();
-    init_utils();
-    init_globals();
-    init_helpers();
-    if ($("#site-header").length > 0) {
-      $body.addClass("v2p-mobile");
-    }
-    void (async () => {
-      const isBrowserExt = isBrowserExtension();
-      const storage = await getStorage();
-      const options = storage["options" /* Options */];
-      // ==================== 开始添加自动签到逻辑 ====================
-
-      if (options.autoCheckIn.enabled) {
-        const dailyUrl = "/mission/daily";
-        const giftLinkSelector = 'a[href="/mission/daily"]';
-        const giftLink = document.querySelector(giftLinkSelector);
-
-        // 如果在当前页面找到了“领取今日的登录奖励”链接
-        if (
-          giftLink &&
-          (giftLink.innerText.includes("领取今日的登录奖励") ||
-            giftLink.closest(".box")?.querySelector(".fa-gift"))
-        ) {
-          // 使用 AJAX 静默签到
-          (async () => {
-            try {
-              // 1. 获取签到页面内容以提取 once token
-              const resDict = await fetch(dailyUrl);
-              const htmlText = await resDict.text();
-
-              // 2. 解析签到按钮的 URL
-              // 支持单引号和双引号，以及不严格的空格
-              const match = htmlText.match(
-                /location\.href\s*=\s*['"]([^'"]+)['"]/,
-              );
-              if (match && match[1]) {
-                const redeemUrl = match[1];
-                // CRITICAL: 必须校验 URL 是否包含了 redeem 关键字，否则可能误抓取到“登出”链接 (/signout)
-                if (redeemUrl.includes("/mission/daily/redeem")) {
-                  // 3. 发送签到请求
-                  const redeemRes = await fetch(redeemUrl);
-                  if (redeemRes.ok) {
-                    // 4. 签到成功，提示用户并移除链接
-                    createToast({
-                      message: "✅ V2EX Polish+: 已自动领取今日登录奖励",
-                    });
-
-                    // 移除顶部的签到提示
-                    const tipBox = giftLink.closest(".box");
-                    if (tipBox) {
-                      tipBox.remove();
-                    }
-
-                    // 如果是在签到页面，尝试刷新一下状态或按钮
-                    if (window.location.pathname === dailyUrl) {
-                      const redeemBtn =
-                        document.querySelector('input[value^="领取"]');
-                      if (redeemBtn) {
-                        redeemBtn.value = "已领取";
-                        redeemBtn.disabled = true;
-                      }
-                    }
-                  }
-                } // end if (redeemUrl.includes)
-              } // end if (match)
-            } catch (err) {
-              console.error("自动签到失败:", err);
-            }
-          })();
-        }
-      }
-      // ==================== 自动签到逻辑结束 ====================
-      // ==================== 自动签到逻辑结束 ====================
-
-      if (options.theme.mode === "compact") {
-        $body.addClass("v2p-mode-compact");
-      }
-      const $toggle = $("#Rightbar .light-toggle").addClass(
-        "v2p-color-mode-toggle",
-      );
-      const syncInfo = storage["settings-sync" /* SyncInfo */];
-
-      if (syncInfo) {
-        const lastCheckTime = syncInfo.lastCheckTime;
-        const twoHours = 2 * 60 * 1e3 * 60;
-        const neverChecked = !lastCheckTime;
-        if (
-          (lastCheckTime && Date.now() - lastCheckTime >= twoHours) ||
-          neverChecked
-        ) {
-          const isSignInPage = window.location.href.includes("/signin");
-          if (!isSignInPage) {
-            void getV2P_Settings().then(async (res) => {
-              const settings = res?.config;
-              const remoteSyncInfo = settings?.["settings-sync" /* SyncInfo */];
-              if (settings && remoteSyncInfo) {
-                if (syncInfo.version < remoteSyncInfo.version || neverChecked) {
-                }
-              }
-            });
-          }
-        }
-      }
-      {
-        const $toggleImg = $toggle.find("> img");
-        const alt = $toggleImg.prop("alt");
-        if (alt === "Light") {
-          $toggle.prop("title", "\u4F7F\u7528\u6DF1\u8272\u4E3B\u9898");
-          $toggleImg.replaceWith('<i data-lucide="moon"></i>');
-        } else if (alt === "Dark") {
-          $toggle.prop("title", "\u4F7F\u7528\u6D45\u8272\u4E3B\u9898");
-          $toggleImg.replaceWith('<i data-lucide="sun"></i>');
-        }
-      }
-      {
-        $("#Top .site-nav .tools > .top").addClass("v2p-hover-btn");
-      }
-      if (options.hideAccount) {
-        const faviconLink = $("link[rel~='icon']");
-        faviconLink.prop("href", "https://v2p.app/favicon.svg");
-        $("#Logo").append(`<i data-lucide="house"></i>`).addClass("v2p-logo");
-        $("#Top").find('a[href^="/member/"]').remove();
-        $infoCard
-          .find(
-            'a[href^="/member/"], table:nth-of-type(1) td:nth-of-type(3) .fade',
-          )
-          .addClass("v2p-hide-account");
-        $infoCard.find(".balance_area").addClass("v2p-hide-balance");
-      }
-    })();
-  },
-});
-
-// src/services.ts
-async function legacyRequest(url, options) {
-  const res = await fetch(url, options);
-  if (res.ok) {
-    return res.json();
-  }
-  throw new Error("\u8C03\u7528 V2EX API v1 \u51FA\u9519", {
-    cause: res.status,
-  });
-}
-async function fetchUserInfo(memberName, options) {
-  try {
-    const member = await legacyRequest(
-      `${V2EX_LEGACY_API}/members/show.json?username=${memberName}`,
-      options,
-    );
-    return member;
-  } catch (err) {
-    if (err instanceof Error) {
-      if (err.name === "AbortError") {
-        throw new Error("\u8BF7\u6C42\u88AB\u53D6\u6D88");
-      } else if (err.cause === 404) {
-        throw new Error(
-          "\u67E5\u65E0\u6B64\u7528\u6237\uFF0C\u7591\u4F3C\u5DF2\u88AB\u5C01\u7981",
-          { cause: err.cause },
-        );
-      }
-    }
-    throw new Error("\u83B7\u53D6\u7528\u6237\u4FE1\u606F\u5931\u8D25");
-  }
-}
-async function request(url, options) {
-  const storage = await getStorage();
-  const PAT = storage["api" /* API */]?.pat;
-  const res = await fetch(url, {
-    ...options,
-    headers: { Authorization: PAT ? `Bearer ${PAT}` : "", ...options?.headers },
-  });
-  {
-    const limit = res.headers.get("X-Rate-Limit-Limit");
-    const reset = res.headers.get("X-Rate-Limit-Reset");
-    const remaining = res.headers.get("X-Rate-Limit-Remaining");
-    const api = {
-      pat: PAT,
-      limit: limit ? Number(limit) : void 0,
-      reset: reset ? Number(reset) : void 0,
-      remaining: remaining ? Number(remaining) : void 0,
-    };
-    void setStorage("api" /* API */, api);
-  }
-  const resultData = await res.json();
-  if (typeof resultData.success === "boolean" && !resultData.success) {
-    throw new Error(resultData.message, { cause: resultData });
-  }
-  return resultData;
-}
-function fetchTopic(topicId, options) {
-  return request(`${V2EX_API}/topics/${topicId}`, {
-    method: "GET",
-    ...options,
-  });
-}
-async function uploadImage(file) {
-  const formData = new FormData();
-  formData.append("image", file);
-  const randomIndex = Math.floor(Math.random() * imgurClientIdPool.length);
-  const clidenId = imgurClientIdPool[randomIndex];
-  const res = await fetch("https://api.imgur.com/3/upload", {
-    method: "POST",
-    headers: { Authorization: `Client-ID ${clidenId}` },
-    body: formData,
-  });
-  if (res.ok) {
-    const resData = await res.json();
-    if (resData.success) {
-      return resData.data.link;
-    }
-  }
-  throw new Error("\u4E0A\u4F20\u5931\u8D25");
-}
-async function refreshMoney() {
-  const res = await fetch("/ajax/money", { method: "POST" });
-  const data = await res.text();
-  $("#money").html(data);
-}
-
-function getOnceToken(replyId) {
-  // 1. 当前脚本里的 window.once
-  if (typeof window.once === "string" && window.once) {
-    return window.once;
-  }
-
-  // 2. 尝试从页面原始 window 取（油猴环境）
-  try {
-    if (
-      typeof unsafeWindow !== "undefined" &&
-      typeof unsafeWindow.once === "string" &&
-      unsafeWindow.once
-    ) {
-      return unsafeWindow.once;
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  // 3. 从 DOM 中原生的感谢链接解析 once
-  //    尝试根据 replyId 定位 thank_area
-  if (typeof replyId === "string" || typeof replyId === "number") {
-    const selector = `#thank_area_${replyId} a.thank[href*="once="]`;
-    const $link = $(selector);
-    if ($link.length) {
-      const href = $link.attr("href") || "";
-      const match = href.match(/[?&]once=([^&]+)/);
-      if (match && match[1]) {
-        return match[1];
-      }
-    }
-  }
-
-  // 4. 兜底：随便找一个带 once 的链接（比如顶部的登出、夜间模式切换等）
-  const $anyLink = $('a[href*="once="]').first();
-  if ($anyLink.length) {
-    const href = $anyLink.attr("href") || "";
-    const match = href.match(/[?&]once=([^&]+)/);
-    if (match && match[1]) {
-      return match[1];
-    }
-  }
-
-  // 实在拿不到，返回空字符串（让请求至少不是 "undefined"）
-  return "";
-}
-
-async function thankReply(params) {
-  try {
-    const once = getOnceToken(params.replyId);
-
-    const res = await fetch(
-      `/thank/reply/${params.replyId}?once=${encodeURIComponent(once)}`,
-      {
-        method: "POST",
-      },
-    );
-    const data = await res.json();
-    postTask(`window.once = ${data.once}`);
-    window.once = data.once;
-    if (data.success) {
-      $("#thank_area_" + params.replyId)
-        .addClass("thanked")
-        .html("\u611F\u8C22\u5DF2\u53D1\u9001");
-      params.onSuccess?.();
-      await refreshMoney();
-    } else {
-      alert(data.message);
-    }
-  } catch {
-    params.onFail?.();
-  }
-}
-async function crawlTopicPage(path, page = "1") {
-  const res = await fetch(`${V2EX_ORIGIN}${path}?p=${page}`);
-  const htmlText = await res.text();
-  return htmlText;
-}
-async function getCommentPreview(params) {
-  const formData = new FormData();
-  formData.append("text", params.text);
-  const res = await fetch(`${V2EX_ORIGIN}/preview/${params.syntax}`, {
-    method: "POST",
-    body: formData,
-  });
-  if (res.ok) {
-    const renderedContent = await res.text();
-    return renderedContent;
-  } else {
-    throw new Error("\u9884\u89C8\u5931\u8D25");
-  }
-}
-var V2EX_LEGACY_API, V2EX_API;
-var init_services = __esm({
-  "src/services.ts"() {
-    "use strict";
-    init_constants();
-    init_helpers();
-    init_utils();
-    V2EX_LEGACY_API = `${V2EX_ORIGIN}/api`;
-    V2EX_API = `${V2EX_ORIGIN}/api/v2`;
-  },
-});
-
-// src/components/button.ts
-function createButton(props) {
-  const { children, className = "", type = "button", tag = "button" } = props;
-  const $button = $(
-    `<${tag} class="normal button ${className}">${children}</${tag}>`,
-  );
-  if (tag === "button") {
-    $button.prop("type", type);
-  }
-  return $button;
-}
-var init_button = __esm({
-  "src/components/button.ts"() {
-    "use strict";
-  },
-});
-
-// src/components/modal.ts
-function createModal(props) {
-  const { root, title, onMount, onOpen, onClose } = props;
-  const $mask = $('<div class="v2p-modal-mask">');
-  const $content = $('<div class="v2p-modal-content">');
-  const $closeBtn = createButton({
-    children: "\u5173\u95ED<kbd>Esc</kbd>",
-    className: "v2p-modal-close-btn",
-  });
-  const $title = $(`<div class="v2p-modal-title">${title ?? ""}</div>`);
-  const $actions = $('<div class="v2p-modal-actions">').append($closeBtn);
-  const $header = $('<div class="v2p-modal-header">').append($title, $actions);
-  const $main2 = $('<div class="v2p-modal-main">')
-    .append($header, $content)
-    .on("click", (ev) => {
-      ev.stopPropagation();
-    });
-  const $container = $mask.append($main2).hide();
-  const modalElements = {
-    $mask,
-    $main: $main2,
-    $header,
-    $container,
-    $title,
-    $actions,
-    $content,
-  };
-  let boundEvent = false;
-  let mouseDownTarget;
-  const mouseDownHandler = (ev) => {
-    mouseDownTarget = ev.target;
-  };
-  const mouseUpHandler = (ev) => {
-    if (
-      mouseDownTarget === $mask.get(0) &&
-      ev.target === $mask.get(0) &&
-      ev.currentTarget === ev.target
-    ) {
-      handleModalClose();
-    }
-  };
-  const keyupHandler = (ev) => {
-    if (ev.key === "Escape") {
-      handleModalClose();
-    }
-  };
-  const handleModalClose = () => {
-    $mask.off("mousedown", mouseDownHandler);
-    $mask.off("mouseup", mouseUpHandler);
-    $(document).off("keydown", keyupHandler);
-    boundEvent = false;
-    $container.fadeOut("fast");
-    document.body.classList.remove("v2p-modal-open");
-    onClose?.(modalElements);
-  };
-  const handleModalOpen = () => {
-    if (root && !$container.parent().length) {
-      root.append($container);
-      $closeBtn.on("click", handleModalClose);
-      onMount?.(modalElements);
-    }
-    setTimeout(() => {
-      if (!boundEvent) {
-        $mask.on("mousedown", mouseDownHandler);
-        $mask.on("mouseup", mouseUpHandler);
-        $(document).on("keydown", keyupHandler);
-        boundEvent = true;
-      }
-    });
-    $container.fadeIn("fast");
-    document.body.classList.add("v2p-modal-open");
-    onOpen?.(modalElements);
-  };
-  return { ...modalElements, open: handleModalOpen, close: handleModalClose };
-}
-var init_modal = __esm({
-  "src/components/modal.ts"() {
-    "use strict";
-    init_button();
-  },
-});
-
-// src/contents/topic/content.ts
-function handleTopicImgHeight() {
-  const $topicContentImgs = $topicContentBox.find(
-    ".topic_content .embedded_image",
-  );
-  $topicContentImgs.each((_, img) => {
-    const $img = $(img);
-    const height = $img.height() ?? 0;
-    const shouldWrap = height > 600;
-    if (shouldWrap) {
-      const collapsedCSS = {
-        maxHeight: `${READABLE_CONTENT_HEIGHT}px`,
-        overflow: "hidden",
-        paddingBottom: "0",
-        "--bg-reply": "var(--v2p-color-bg-content)",
-      };
-      const $contentBox = $(
-        '<div class="v2p-reply-content v2p-collapsed">',
-      ).css(collapsedCSS);
-      const $expandBtn = createButton({
-        children: "\u5C55\u5F00\u56FE\u7247",
-        className: "v2p-expand-btn",
-      });
-      const toggleContent = () => {
-        const collapsed = $contentBox.hasClass("v2p-collapsed");
-        $contentBox
-          .toggleClass("v2p-collapsed")
-          .css(
-            collapsed
-              ? { maxHeight: "none", overflow: "auto", paddingBottom: "40px" }
-              : collapsedCSS,
-          );
-        $expandBtn.html(
-          collapsed ? "\u6536\u8D77\u56FE\u7247" : "\u5C55\u5F00\u56FE\u7247",
-        );
-      };
-      $expandBtn.on("click", () => {
-        toggleContent();
-      });
-      $contentBox.append($img.clone()).replaceAll($img).append($expandBtn);
-    }
-  });
-}
-function handleContent() {
-  const storage = getStorageSync();
-  const options = storage["options" /* Options */];
-  if (options.openInNewTab) {
-    $topicContentBox
-      .find(".topic_content a[href]")
-      .prop("target", "_blank")
-      .prop("rel", "noopener noreferrer");
-  }
-  {
-    const $topicContents = $topicContentBox.find(".subtle > .topic_content");
-    const textLength = $topicContents.text().length;
-    if (textLength >= 200) {
-      $topicContents.each((_, topicContent) => {
-        if (textLength >= 400) {
-          topicContent.style.fontSize = "14px";
-        }
-        topicContent.style.fontSize = "14.5px";
-      });
-    }
-  }
-  {
-    const $topicBtns = $(".topic_buttons");
-    const $topicBtn = $topicBtns.find(".tb").addClass("v2p-tb v2p-hover-btn");
-    const $favoriteBtn = $topicBtn.eq(0);
-    $favoriteBtn.append(
-      '<span class="v2p-tb-icon"><i data-lucide="star"></i></span>',
-    );
-    $topicBtn
-      .eq(1)
-      .append('<span class="v2p-tb-icon"><i data-lucide="twitter"></i></span>');
-    $topicBtn
-      .eq(2)
-      .append('<span class="v2p-tb-icon"><i data-lucide="eye-off"></i></span>');
-    $topicBtn
-      .eq(3)
-      .append('<span class="v2p-tb-icon"><i data-lucide="heart"></i></span>');
-    if (pathTopicId) {
-      $topicBtns.append(
-        ` &nbsp;<a href="${"https://v2p.app/share" /* Share */}/${pathTopicId}" target="_blank" class="tb v2p-tb v2p-hover-btn">\u5206\u4EAB<span class="v2p-tb-icon"><i data-lucide="arrow-up-right-square"></i></span></a>`,
-      );
-    }
-    loadIcons();
-  }
-  window.requestIdleCallback(() => {
-    handleTopicImgHeight();
-  });
-}
-function processReplyContent($cellDom) {
-  if ($cellDom.find(".v2p-reply-content").length > 0) {
-    return;
-  }
-  const $replyContent = $cellDom.find(".reply_content");
-  const contentHeight = $replyContent.height() ?? 0;
-  const shouldCollapsed =
-    contentHeight + READABLE_CONTENT_HEIGHT >= MAX_CONTENT_HEIGHT;
-  if (shouldCollapsed) {
-    const collapsedCSS = {
-      maxHeight: `${READABLE_CONTENT_HEIGHT}px`,
-      overflow: "hidden",
-      paddingBottom: "0",
-    };
-    const $contentBox = $('<div class="v2p-reply-content v2p-collapsed">').css(
-      collapsedCSS,
-    );
-    const $expandBtn = createButton({
-      children: "\u5C55\u5F00\u56DE\u590D",
-      className: "v2p-expand-btn",
-    });
-    const toggleContent = () => {
-      const collapsed = $contentBox.hasClass("v2p-collapsed");
-      $contentBox
-        .toggleClass("v2p-collapsed")
-        .css(
-          collapsed
-            ? { maxHeight: "none", overflow: "auto", paddingBottom: "40px" }
-            : collapsedCSS,
-        );
-      $expandBtn.html(
-        collapsed ? "\u6536\u8D77\u56DE\u590D" : "\u5C55\u5F00\u56DE\u590D",
-      );
-    };
-    $expandBtn.on("click", () => {
-      toggleContent();
-    });
-    $contentBox
-      .append($replyContent.clone())
-      .replaceAll($replyContent)
-      .append($expandBtn);
-  }
-}
-function updateMemberTag() {}
-
-function openTagsSetter() {}
-
-function handleTopicImg() {
-  const $imgs = $(".embedded_image");
-  if ($imgs.length > 0) {
-    const modal = createModal({
-      root: $body,
-      onMount: ({ $main: $main2, $header, $content }) => {
-        $main2.css({
-          width: "auto",
-          height: "auto",
-          display: "flex",
-          "justify-content": "center",
-          "background-color": "transparent",
-          "pointer-events": "none",
-        });
-        $header.remove();
-        $content.css({
-          display: "flex",
-          "justify-content": "center",
-          "align-items": "center",
-          "pointer-events": "none",
-        });
-      },
-      onOpen: ({ $content }) => {
-        $content.empty();
-      },
-    });
-    $imgs.each((_, img) => {
-      const $img = $(img);
-      if (img instanceof HTMLImageElement) {
-        $img.parent().removeAttr("href");
-        if (img.clientWidth !== img.naturalWidth) {
-          $img.css({ cursor: "zoom-in" });
-          $img.on("click", () => {
-            const $clonedImg = $img.clone();
-            $clonedImg.css({ cursor: "default", "pointer-events": "auto" });
-            modal.open();
-            modal.$content.append($clonedImg);
-          });
-        }
-      }
-    });
-  }
-}
-var init_content = __esm({
-  "src/contents/topic/content.ts"() {
-    "use strict";
-    init_button();
-    init_modal();
-    init_constants();
-    init_use_topic_preview();
-    init_utils();
-    init_globals();
-    init_helpers();
-  },
-});
-
-// src/contents/dom.ts
-function getCommentDataList({
-  options,
-  $commentTableRows: $commentTableRows2,
-  $commentCells: $commentCells2,
-}) {
-  return $commentTableRows2
-    .map((idx, tr) => {
-      const id = $commentCells2[idx].id;
-      const $tr = $(tr);
-      const $td = $tr.find("> td:nth-child(3)");
-      const thanked = $tr
-        .find("> td:last-of-type > .fr")
-        .find("> .thank_area")
-        .hasClass("thanked");
-      const $member = $td.find("> strong > a");
-      const memberName = $member.text();
-      const memberLink = $member.prop("href");
-      const memberAvatar = $tr.find(".avatar").prop("src");
-      const $content = $td.find("> .reply_content");
-      const content = $content.text();
-      const likes = Number($td.find("span.small").text());
-      const floor = $td.find("span.no").text();
-      const memberNameMatches = Array.from(
-        content.matchAll(/@([a-zA-Z0-9]+)/g),
-      );
-      const refMemberNames =
-        memberNameMatches.length > 0
-          ? memberNameMatches.map(([, name]) => {
-              return name;
-            })
-          : void 0;
-      const floorNumberMatches = Array.from(content.matchAll(/#(\d+)/g));
-      const refFloors =
-        floorNumberMatches.length > 0
-          ? floorNumberMatches.map(([, floor2]) => {
-              return floor2;
-            })
-          : void 0;
-      let contentHtml = void 0;
-      if (refMemberNames) {
-        const canHideRefName =
-          options.nestedReply.display === "indent" &&
-          !!options.replyContent.hideRefName;
-        if (canHideRefName) {
-          if (refMemberNames.length === 1) {
-            contentHtml = $content.html();
-            const pattern = /(@<a href="\/member\/\w+">[\w\s]+<\/a>)\s+/g;
-            const replacement = '<span class="v2p-member-ref">$1</span> ';
-            contentHtml = contentHtml.replace(pattern, replacement);
-          }
-        }
-      }
-      return {
-        id,
-        memberName,
-        memberLink,
-        memberAvatar,
-        content,
-        contentHtml,
-        likes,
-        floor,
-        index: idx,
-        refMemberNames,
-        refFloors,
-        thanked,
-      };
-    })
-    .get();
-}
-function handleNestedComment({
-  options,
-  $commentCells: $commentCells2,
-  commentDataList: commentDataList2,
-}) {
-  const display = options.nestedReply.display;
-  if (display !== "off") {
-    $commentCells2.each((i, cellDom) => {
-      const $cellDom = $(cellDom);
-      const dataFromIndex = commentDataList2.at(i);
-      if (options.replyContent.autoFold) {
-        processReplyContent($cellDom);
-      }
-      const currentComment =
-        dataFromIndex?.id === cellDom.id
-          ? dataFromIndex
-          : commentDataList2.find((data) => data.id === cellDom.id);
-      if (currentComment) {
-        const { refMemberNames, refFloors } = currentComment;
-        if (!refMemberNames || refMemberNames.length === 0) {
-          return;
-        }
-        const moreThanOneRefMember = refMemberNames.length > 1;
-        if (
-          options.nestedReply.multipleInsideOne === "off" &&
-          refMemberNames.length > 1
-        ) {
-          return;
-        }
-        for (const refName of moreThanOneRefMember
-          ? refMemberNames.toReversed()
-          : refMemberNames) {
-          for (let j = i - 1; j >= 0; j--) {
-            const { memberName: compareName, floor: eachFloor } =
-              commentDataList2.at(j) || {};
-            if (compareName === refName) {
-              let refCommentIdx = j;
-              const firstRefFloor = moreThanOneRefMember
-                ? refFloors?.toReversed().at(0)
-                : refFloors?.at(0);
-              if (firstRefFloor && firstRefFloor !== eachFloor) {
-                const targetIdx = commentDataList2
-                  .slice(0, j)
-                  .findIndex(
-                    (data) =>
-                      data.floor === firstRefFloor &&
-                      data.memberName === refName,
-                  );
-                if (targetIdx >= 0) {
-                  refCommentIdx = targetIdx;
-                }
-              }
-              if (display === "indent") {
-                cellDom.classList.add("v2p-indent");
-              }
-              $commentCells2.eq(refCommentIdx).append(cellDom);
-              return;
-            }
-          }
-        }
-      }
-    });
-  }
-}
-var init_dom = __esm({
-  "src/contents/dom.ts"() {
-    "use strict";
-    init_content();
-  },
-});
-
-var invalidTemplate, topicDataCache;
-var init_use_topic_preview = __esm({
-  "src/use-topic-preview.ts"() {
-    "use strict";
-    init_lucide();
-    init_button();
-    init_modal();
-    init_constants();
-    init_dom();
-    init_globals();
-    init_helpers();
-    init_content();
-    init_icons();
-    init_services();
-    init_utils();
-    invalidTemplate = (tip) => `
-<div class="v2p-no-pat">
-  <div class="v2p-no-pat-title">${tip}</div>
-  <div class="v2p-no-pat-desc">
-    \u8BF7\u524D\u5F80<span class="v2p-no-pat-block"><span class="v2p-icon-logo">${iconLogo}</span> <span style="margin: 0 5px;">></span> \u8BBE\u7F6E</span> \u8FDB\u884C\u8BBE\u7F6E\u3002
-  </div>
-
-  <div class="v2p-no-pat-steps">
-    <div class="v2p-no-pat-step">
-      <div style="font-weight:bold;margin-bottom:10px;font-size:15px;">1. \u5728\u6269\u5C55\u7A0B\u5E8F\u5217\u8868\u4E2D\u627E\u5230\u5E76\u70B9\u51FB\u300CV2EX Polish\u300D\u3002</div>
-      <img class="v2p-no-pat-img" src="https://i.imgur.com/UfNkuTF.png">
-    </div>
-    <div class="v2p-no-pat-step">
-      <div style="font-weight:bold;margin-bottom:10px;font-size:15px;">2. \u5728\u5F39\u51FA\u7684\u5C0F\u7A97\u53E3\u4E2D\u627E\u5230\u300C\u2699\uFE0F \u6309\u94AE\u300D\uFF0C\u8F93\u5165 PAT\u3002</div>
-      <img class="v2p-no-pat-img" src="https://i.imgur.com/O6hP86A.png">
-    </div>
-  </div>
-</div>
-`;
-    topicDataCache = /* @__PURE__ */ new Map();
-  },
-});
-
-var init_topic_list = __esm({
-  "src/contents/home/topic-list.ts"() {
-    "use strict";
-    init_toast();
-    init_constants();
-    init_services();
-    init_use_topic_preview();
-    init_utils();
-    init_globals();
-  },
-});
-
-// src/contents/home/index.ts
-var home_exports = {};
-var init_home = __esm({
-  "src/contents/home/index.ts"() {
-    "use strict";
-    init_constants();
-    init_utils();
-    init_globals();
-    init_helpers();
-    init_topic_list();
-    function handleNodeNavToggle() {
-      // 1. 查找包含“节点导航”文本的标题区域
-      // 这里的筛选逻辑是为了确保只定位到正确的那个 box
-      const $headerSpan = $(".box .cell span.fade").filter((_, el) => {
-        return $(el).text().includes("节点导航");
-      });
-
-      if ($headerSpan.length === 0) return;
-
-      // 2. 获取容器和需要折叠的内容
-      // 逻辑：找到父级 .box，然后选取除了第一个子元素（标题栏）以外的所有子元素
-      const $box = $headerSpan.closest(".box");
-      const $headerCell = $headerSpan.closest(".cell");
-      const $content = $box.children().not(":first-child");
-
-      // 3. 定义存储 Key
-      const STORAGE_KEY = "v2p_nav_collapsed";
-
-      // 4. 创建切换按钮
-      // 使用 v2p-hover-btn 类以保持样式一致，行内样式微调位置
-      const $toggleBtn = $(
-        '<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; display: inline-flex; justify-content: center; align-items: center; color: #ccc; vertical-align: text-bottom;"></a>',
-      );
-
-      const icons = {
-        arrowUp:
-          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
-        arrowDown:
-          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
-      };
-
-      // 5. 定义切换状态的逻辑
-      const applyState = (isCollapsed) => {
-        if (isCollapsed) {
-          $content.hide();
-          $toggleBtn.html(icons.arrowDown); // 折叠状态显示“向下展开”
-          // 稍微减小 box 的下边距，折叠后看起来更紧凑
-          $box.css("margin-bottom", "10px");
-          $headerCell.css("border-bottom", "none");
-        } else {
-          $content.show();
-          $toggleBtn.html(icons.arrowUp); // 展开状态显示“向上收起”
-          $box.css("margin-bottom", "");
-          $headerCell.css("border-bottom", "");
-        }
-        // 存储状态：'1' 为折叠，'0' 为展开
-        localStorage.setItem(STORAGE_KEY, isCollapsed ? "1" : "0");
-      };
-
-      // 6. 绑定点击事件
-      $toggleBtn.on("click", function () {
-        const isContentVisible = $content.is(":visible");
-        // 如果当前内容可见，则点击意图是折叠 (isCollapsed = true)
-        applyState(isContentVisible);
-      });
-
-      // 7. 初始化：读取存储的状态并应用
-      const savedState = localStorage.getItem(STORAGE_KEY) === "1";
-      applyState(savedState);
-
-      // 8. 将按钮插入到“节点导航”文字后面
-      $headerSpan.append($toggleBtn);
-    }
-
-    // 通用的右侧边栏区域折叠功能
-    function handleSidebarSectionToggle(sectionTitle, storageKey) {
-      // 1. 查找包含指定文本的标题区域
-      const $headerSpan = $(
-        "#Rightbar .box .cell span.fade, #Rightbar .box .inner span.fade, #Rightbar .box .inner span.f12.gray, #Rightbar .box .cell span.f12.gray",
-      ).filter((_, el) => {
-        return $(el).text().trim() === sectionTitle;
-      });
-
-      if ($headerSpan.length === 0) return;
-
-      // 如果是"我收藏的节点"，将字体样式改为和其他栏一致的 fade 类
-      if (sectionTitle === "我收藏的节点") {
-        $headerSpan.removeClass("f12 gray").addClass("fade");
-      }
-
-      // 2. 获取容器和需要折叠的内容
-      const $box = $headerSpan.closest(".box");
-      const $headerContainer = $headerSpan.closest(".cell, .inner");
-      const $content = $box.children().not($headerContainer);
-
-      // 标记为可排序区块
-      $box.attr("data-v2p-sortable", sectionTitle);
-
-      // 3. 创建切换按钮
-      const $toggleBtn = $(
-        '<a href="javascript:void(0);" class="v2p-hover-btn" style="margin-left: 10px; display: inline-flex; justify-content: center; align-items: center; color: #ccc; vertical-align: text-bottom;"></a>',
-      );
-
-      const icons = {
-        arrowUp:
-          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
-        arrowDown:
-          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
-      };
-
-      // 4. 定义切换状态的逻辑
-      const applyState = (isCollapsed) => {
-        if (isCollapsed) {
-          $content.hide();
-          $toggleBtn.html(icons.arrowDown);
-          $box.css("margin-bottom", "10px");
-          $headerContainer.css("border-bottom", "none");
-        } else {
-          $content.show();
-          $toggleBtn.html(icons.arrowUp);
-          $box.css("margin-bottom", "");
-          $headerContainer.css("border-bottom", "");
-        }
-        localStorage.setItem(storageKey, isCollapsed ? "1" : "0");
-      };
-
-      // 5. 绑定点击事件
-      $toggleBtn.on("click", function () {
-        const isContentVisible = $content.is(":visible");
-        applyState(isContentVisible);
-      });
-
-      // 6. 初始化：读取存储的状态并应用
-      const savedState = localStorage.getItem(storageKey) === "1";
-      applyState(savedState);
-
-      // 7. 将按钮插入到标题文字后面
-      $headerSpan.append($toggleBtn);
-    }
-
-    // 右侧边栏拖拽排序功能
-    function handleSidebarDragSort() {
-      const STORAGE_KEY = "v2p_sidebar_order";
-      const $sortableBoxes = $("#Rightbar [data-v2p-sortable]");
-      if ($sortableBoxes.length < 2) return;
-
-      // 添加拖拽相关 CSS
-      $("<style>")
-        .text(
-          "[data-v2p-sortable].v2p-drag-over-top { box-shadow: 0 -2px 0 0 var(--v2p-color-accent, #4a90d9) !important; }" +
-            "[data-v2p-sortable].v2p-drag-over-bottom { box-shadow: 0 2px 0 0 var(--v2p-color-accent, #4a90d9) !important; }" +
-            ".v2p-drag-handle:hover { opacity: 0.7 !important; }" +
-            "[data-v2p-sortable].v2p-dragging { opacity: 0.4; transition: opacity 0.15s; }",
-        )
-        .appendTo("head");
-
-      // 在每个可排序 box 前插入位置标记（用于记忆原始位置）
-      const slots = [];
-      $sortableBoxes.each((_, box) => {
-        const $slot = $(
-          '<span class="v2p-sort-slot" style="display:none;"></span>',
-        );
-        $(box).before($slot);
-        slots.push($slot[0]);
-      });
-
-      // 为每个可排序区块的标题添加拖拽手柄
-      $sortableBoxes.each((_, box) => {
-        const $box = $(box);
-        const $header = $box.children(".cell, .inner").first();
-        const $fadeSpan = $header.find("span.fade").first();
-        const $dragHandle = $(
-          '<span class="v2p-drag-handle" style="cursor: grab; display: inline-flex; align-items: center; margin-right: 4px; opacity: 0.3; vertical-align: text-bottom;" title="拖拽排序">' +
-            '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '<circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/>' +
-            '<circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>' +
-            '<circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/>' +
-            "</svg>" +
-            "</span>",
-        );
-        $fadeSpan.before($dragHandle);
-
-        // 只有从拖拽手柄按下时才允许拖拽
-        $dragHandle.on("mousedown", function () {
-          $box.attr("draggable", "true");
-        });
-      });
-
-      // 全局 mouseup 取消 draggable 状态
-      $(document).on("mouseup", function () {
-        $sortableBoxes.removeAttr("draggable");
-      });
-
-      // HTML5 Drag and Drop 事件设置
-      let dragSrcBox = null;
-
-      $sortableBoxes.each((_, box) => {
-        box.addEventListener("dragstart", function (e) {
-          dragSrcBox = box;
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", "");
-          setTimeout(() => {
-            box.classList.add("v2p-dragging");
-          }, 0);
-        });
-
-        box.addEventListener("dragend", function () {
-          box.classList.remove("v2p-dragging");
-          $("[data-v2p-sortable]").removeClass(
-            "v2p-drag-over-top v2p-drag-over-bottom",
-          );
-          box.removeAttribute("draggable");
-          dragSrcBox = null;
-        });
-
-        box.addEventListener("dragover", function (e) {
-          if (!dragSrcBox || dragSrcBox === box) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-
-          const rect = box.getBoundingClientRect();
-          const midY = rect.top + rect.height / 2;
-          const $box = $(box);
-          $box.removeClass("v2p-drag-over-top v2p-drag-over-bottom");
-          if (e.clientY < midY) {
-            $box.addClass("v2p-drag-over-top");
-          } else {
-            $box.addClass("v2p-drag-over-bottom");
-          }
-        });
-
-        box.addEventListener("dragleave", function () {
-          $(box).removeClass("v2p-drag-over-top v2p-drag-over-bottom");
-        });
-
-        box.addEventListener("drop", function (e) {
-          e.stopPropagation();
-          e.preventDefault();
-          if (!dragSrcBox || dragSrcBox === box) return;
-
-          // 获取当前 DOM 排列顺序
-          const currentOrder = [];
-          $("#Rightbar [data-v2p-sortable]").each((_, b) => {
-            currentOrder.push($(b).attr("data-v2p-sortable"));
-          });
-
-          const srcId = $(dragSrcBox).attr("data-v2p-sortable");
-          const targetId = $(box).attr("data-v2p-sortable");
-
-          // 从当前顺序中移除被拖拽的项
-          const srcIdx = currentOrder.indexOf(srcId);
-          currentOrder.splice(srcIdx, 1);
-
-          // 确定插入位置（目标的上方或下方）
-          let targetIdx = currentOrder.indexOf(targetId);
-          const rect = box.getBoundingClientRect();
-          if (e.clientY >= rect.top + rect.height / 2) {
-            targetIdx += 1;
-          }
-          currentOrder.splice(targetIdx, 0, srcId);
-
-          // 应用新顺序并保存
-          applyOrder(currentOrder);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(currentOrder));
-
-          $("[data-v2p-sortable]").removeClass(
-            "v2p-drag-over-top v2p-drag-over-bottom",
-          );
-        });
-      });
-
-      // 应用指定顺序到 DOM
-      function applyOrder(newOrder) {
-        // 先将所有可排序 box 及其后面的 sep20 从 DOM 中卸载
-        const detached = {};
-        newOrder.forEach((id) => {
-          const $box = $(`#Rightbar [data-v2p-sortable="${id}"]`);
-          const $sep = $box.next(".sep20");
-          detached[id] = { $box, $sep };
-          $sep.detach();
-          $box.detach();
-        });
-
-        // 按新顺序重新插入到各个位置标记后面
-        newOrder.forEach((id, idx) => {
-          const { $box, $sep } = detached[id];
-          $(slots[idx]).after($box);
-          $box.after($sep);
-        });
-      }
-
-      // 恢复保存的排列顺序
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          const order = JSON.parse(saved);
-          const existing = new Set();
-          $sortableBoxes.each((_, box) =>
-            existing.add($(box).attr("data-v2p-sortable")),
-          );
-          if (
-            order.length === existing.size &&
-            order.every((id) => existing.has(id))
-          ) {
-            applyOrder(order);
-          }
-        } catch (e) {
-          /* 忽略无效的保存数据 */
-        }
-      }
-    }
-
-    // 将"创作新主题"合并到用户信息卡片中
-    function mergeCreateTopicToUserCard() {
-      // 查找用户信息卡片（包含 #member-activity）
-      const $userCard = $("#member-activity").closest(".box");
-      if ($userCard.length === 0) return;
-
-      // 查找"创作新主题"区块（通过 /write 链接识别）
-      const $writeLink = $('#Rightbar a[href="/write"]').first();
-      if ($writeLink.length === 0) return;
-
-      const $writeBox = $writeLink.closest(".box");
-      if ($writeBox.length === 0 || $writeBox[0] === $userCard[0]) return;
-
-      // 获取"创作新主题"的 cell 并移到用户卡片末尾
-      const $writeCell = $writeLink.closest(".cell");
-      $userCard.append($writeCell);
-
-      // 移除空的原 box 及其前面的分隔符
-      $writeBox.prev(".sep").remove();
-      $writeBox.remove();
-    }
-
-    void (async () => {
-      const storage = await getStorage();
-      const options = storage["options" /* Options */];
-      {
-        $("#Main .tab").addClass("v2p-hover-btn");
-        if (options.openInNewTab) {
-          $(
-            '#Main .topic-link, .item_hot_topic_title > a, .item_node, a[href="/write"]',
-          ).prop("target", "_blank");
-        }
-      }
-      handleNodeNavToggle();
-
-      // 将"创作新主题"合并到用户信息卡片
-      mergeCreateTopicToUserCard();
-
-      // 为右侧边栏的各个区域添加折叠功能
-      handleSidebarSectionToggle(
-        "我收藏的节点",
-        "v2p_sidebar_fav_nodes_collapsed",
-      );
-      handleSidebarSectionToggle(
-        "今日热议主题",
-        "v2p_sidebar_hot_topics_collapsed",
-      );
-      handleSidebarSectionToggle("最热节点", "v2p_sidebar_hot_nodes_collapsed");
-      handleSidebarSectionToggle(
-        "最近新增节点",
-        "v2p_sidebar_new_nodes_collapsed",
-      );
-      handleSidebarSectionToggle(
-        "社区运行状况",
-        "v2p_sidebar_community_status_collapsed",
-      );
-
-      // 为右侧边栏添加拖拽排序功能
-      handleSidebarDragSort();
-
-      loadIcons();
-    })();
-  },
-});
-
-// node_modules/.pnpm/@floating-ui+utils@0.2.3/node_modules/@floating-ui/utils/dist/floating-ui.utils.mjs
-function clamp(start, value, end) {
-  return max(start, min(value, end));
-}
-function evaluate(value, param) {
-  return typeof value === "function" ? value(param) : value;
-}
-function getSide(placement) {
-  return placement.split("-")[0];
-}
-function getAlignment(placement) {
-  return placement.split("-")[1];
-}
-function getOppositeAxis(axis) {
-  return axis === "x" ? "y" : "x";
-}
-function getAxisLength(axis) {
-  return axis === "y" ? "height" : "width";
-}
-function getSideAxis(placement) {
-  return ["top", "bottom"].includes(getSide(placement)) ? "y" : "x";
-}
-function getAlignmentAxis(placement) {
-  return getOppositeAxis(getSideAxis(placement));
-}
-function getAlignmentSides(placement, rects, rtl) {
-  if (rtl === void 0) {
-    rtl = false;
-  }
-  const alignment = getAlignment(placement);
-  const alignmentAxis = getAlignmentAxis(placement);
-  const length = getAxisLength(alignmentAxis);
-  let mainAlignmentSide =
-    alignmentAxis === "x"
-      ? alignment === (rtl ? "end" : "start")
-        ? "right"
-        : "left"
-      : alignment === "start"
-        ? "bottom"
-        : "top";
-  if (rects.reference[length] > rects.floating[length]) {
-    mainAlignmentSide = getOppositePlacement(mainAlignmentSide);
-  }
-  return [mainAlignmentSide, getOppositePlacement(mainAlignmentSide)];
-}
-function getExpandedPlacements(placement) {
-  const oppositePlacement = getOppositePlacement(placement);
-  return [
-    getOppositeAlignmentPlacement(placement),
-    oppositePlacement,
-    getOppositeAlignmentPlacement(oppositePlacement),
-  ];
-}
-function getOppositeAlignmentPlacement(placement) {
-  return placement.replace(
-    /start|end/g,
-    (alignment) => oppositeAlignmentMap[alignment],
-  );
-}
-function getSideList(side, isStart, rtl) {
-  const lr = ["left", "right"];
-  const rl = ["right", "left"];
-  const tb = ["top", "bottom"];
-  const bt = ["bottom", "top"];
-  switch (side) {
-    case "top":
-    case "bottom":
-      if (rtl) return isStart ? rl : lr;
-      return isStart ? lr : rl;
-    case "left":
-    case "right":
-      return isStart ? tb : bt;
-    default:
-      return [];
-  }
-}
-function getOppositeAxisPlacements(placement, flipAlignment, direction, rtl) {
-  const alignment = getAlignment(placement);
-  let list = getSideList(getSide(placement), direction === "start", rtl);
-  if (alignment) {
-    list = list.map((side) => side + "-" + alignment);
-    if (flipAlignment) {
-      list = list.concat(list.map(getOppositeAlignmentPlacement));
-    }
-  }
-  return list;
-}
-function getOppositePlacement(placement) {
-  return placement.replace(
-    /left|right|bottom|top/g,
-    (side) => oppositeSideMap[side],
-  );
-}
-function expandPaddingObject(padding) {
-  return {
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    ...padding,
-  };
-}
-function getPaddingObject(padding) {
-  return typeof padding !== "number"
-    ? expandPaddingObject(padding)
-    : {
-        top: padding,
-        right: padding,
-        bottom: padding,
-        left: padding,
-      };
-}
-function rectToClientRect(rect) {
-  const { x, y, width, height } = rect;
-  return {
-    width,
-    height,
-    top: y,
-    left: x,
-    right: x + width,
-    bottom: y + height,
-    x,
-    y,
-  };
-}
-var min, max, oppositeSideMap, oppositeAlignmentMap;
-var init_floating_ui_utils = __esm({
-  "node_modules/.pnpm/@floating-ui+utils@0.2.3/node_modules/@floating-ui/utils/dist/floating-ui.utils.mjs"() {
-    "use strict";
-    min = Math.min;
-    max = Math.max;
-    oppositeSideMap = {
-      left: "right",
-      right: "left",
-      bottom: "top",
-      top: "bottom",
-    };
-    oppositeAlignmentMap = {
-      start: "end",
-      end: "start",
-    };
-  },
-});
-
-// node_modules/.pnpm/@floating-ui+core@1.6.3/node_modules/@floating-ui/core/dist/floating-ui.core.mjs
-function computeCoordsFromPlacement(_ref, placement, rtl) {
-  let { reference, floating } = _ref;
-  const sideAxis = getSideAxis(placement);
-  const alignmentAxis = getAlignmentAxis(placement);
-  const alignLength = getAxisLength(alignmentAxis);
-  const side = getSide(placement);
-  const isVertical = sideAxis === "y";
-  const commonX = reference.x + reference.width / 2 - floating.width / 2;
-  const commonY = reference.y + reference.height / 2 - floating.height / 2;
-  const commonAlign = reference[alignLength] / 2 - floating[alignLength] / 2;
-  let coords;
-  switch (side) {
-    case "top":
-      coords = {
-        x: commonX,
-        y: reference.y - floating.height,
-      };
-      break;
-    case "bottom":
-      coords = {
-        x: commonX,
-        y: reference.y + reference.height,
-      };
-      break;
-    case "right":
-      coords = {
-        x: reference.x + reference.width,
-        y: commonY,
-      };
-      break;
-    case "left":
-      coords = {
-        x: reference.x - floating.width,
-        y: commonY,
-      };
-      break;
-    default:
-      coords = {
-        x: reference.x,
-        y: reference.y,
-      };
-  }
-  switch (getAlignment(placement)) {
-    case "start":
-      coords[alignmentAxis] -= commonAlign * (rtl && isVertical ? -1 : 1);
-      break;
-    case "end":
-      coords[alignmentAxis] += commonAlign * (rtl && isVertical ? -1 : 1);
-      break;
-  }
-  return coords;
-}
-async function detectOverflow(state, options) {
-  var _await$platform$isEle;
-  if (options === void 0) {
-    options = {};
-  }
-  const { x, y, platform: platform2, rects, elements, strategy } = state;
-  const {
-    boundary = "clippingAncestors",
-    rootBoundary = "viewport",
-    elementContext = "floating",
-    altBoundary = false,
-    padding = 0,
-  } = evaluate(options, state);
-  const paddingObject = getPaddingObject(padding);
-  const altContext = elementContext === "floating" ? "reference" : "floating";
-  const element = elements[altBoundary ? altContext : elementContext];
-  const clippingClientRect = rectToClientRect(
-    await platform2.getClippingRect({
-      element: (
-        (_await$platform$isEle = await (platform2.isElement == null
-          ? void 0
-          : platform2.isElement(element))) != null
-          ? _await$platform$isEle
-          : true
-      )
-        ? element
-        : element.contextElement ||
-          (await (platform2.getDocumentElement == null
-            ? void 0
-            : platform2.getDocumentElement(elements.floating))),
-      boundary,
-      rootBoundary,
-      strategy,
-    }),
-  );
-  const rect =
-    elementContext === "floating"
-      ? {
-          x,
-          y,
-          width: rects.floating.width,
-          height: rects.floating.height,
-        }
-      : rects.reference;
-  const offsetParent = await (platform2.getOffsetParent == null
-    ? void 0
-    : platform2.getOffsetParent(elements.floating));
-  const offsetScale = (await (platform2.isElement == null
-    ? void 0
-    : platform2.isElement(offsetParent)))
-    ? (await (platform2.getScale == null
-        ? void 0
-        : platform2.getScale(offsetParent))) || {
-        x: 1,
-        y: 1,
-      }
-    : {
-        x: 1,
-        y: 1,
-      };
-  const elementClientRect = rectToClientRect(
-    platform2.convertOffsetParentRelativeRectToViewportRelativeRect
-      ? await platform2.convertOffsetParentRelativeRectToViewportRelativeRect({
-          elements,
-          rect,
-          offsetParent,
-          strategy,
-        })
-      : rect,
-  );
-  return {
-    top:
-      (clippingClientRect.top - elementClientRect.top + paddingObject.top) /
-      offsetScale.y,
-    bottom:
-      (elementClientRect.bottom -
-        clippingClientRect.bottom +
-        paddingObject.bottom) /
-      offsetScale.y,
-    left:
-      (clippingClientRect.left - elementClientRect.left + paddingObject.left) /
-      offsetScale.x,
-    right:
-      (elementClientRect.right -
-        clippingClientRect.right +
-        paddingObject.right) /
-      offsetScale.x,
-  };
-}
-async function convertValueToCoords(state, options) {
-  const { placement, platform: platform2, elements } = state;
-  const rtl = await (platform2.isRTL == null
-    ? void 0
-    : platform2.isRTL(elements.floating));
-  const side = getSide(placement);
-  const alignment = getAlignment(placement);
-  const isVertical = getSideAxis(placement) === "y";
-  const mainAxisMulti = ["left", "top"].includes(side) ? -1 : 1;
-  const crossAxisMulti = rtl && isVertical ? -1 : 1;
-  const rawValue = evaluate(options, state);
-  let { mainAxis, crossAxis, alignmentAxis } =
-    typeof rawValue === "number"
-      ? {
-          mainAxis: rawValue,
-          crossAxis: 0,
-          alignmentAxis: null,
-        }
-      : {
-          mainAxis: 0,
-          crossAxis: 0,
-          alignmentAxis: null,
-          ...rawValue,
-        };
-  if (alignment && typeof alignmentAxis === "number") {
-    crossAxis = alignment === "end" ? alignmentAxis * -1 : alignmentAxis;
-  }
-  return isVertical
-    ? {
-        x: crossAxis * crossAxisMulti,
-        y: mainAxis * mainAxisMulti,
-      }
-    : {
-        x: mainAxis * mainAxisMulti,
-        y: crossAxis * crossAxisMulti,
-      };
-}
-var computePosition, flip, offset, shift;
-var init_floating_ui_core = __esm({
-  "node_modules/.pnpm/@floating-ui+core@1.6.3/node_modules/@floating-ui/core/dist/floating-ui.core.mjs"() {
-    "use strict";
-    init_floating_ui_utils();
-    init_floating_ui_utils();
-    computePosition = async (reference, floating, config) => {
-      const {
-        placement = "bottom",
-        strategy = "absolute",
-        middleware = [],
-        platform: platform2,
-      } = config;
-      const validMiddleware = middleware.filter(Boolean);
-      const rtl = await (platform2.isRTL == null
-        ? void 0
-        : platform2.isRTL(floating));
-      let rects = await platform2.getElementRects({
-        reference,
-        floating,
-        strategy,
-      });
-      let { x, y } = computeCoordsFromPlacement(rects, placement, rtl);
-      let statefulPlacement = placement;
-      let middlewareData = {};
-      let resetCount = 0;
-      for (let i = 0; i < validMiddleware.length; i++) {
-        const { name, fn } = validMiddleware[i];
-        const {
-          x: nextX,
-          y: nextY,
-          data,
-          reset,
-        } = await fn({
-          x,
-          y,
-          initialPlacement: placement,
-          placement: statefulPlacement,
-          strategy,
-          middlewareData,
-          rects,
-          platform: platform2,
-          elements: {
-            reference,
-            floating,
-          },
-        });
-        x = nextX != null ? nextX : x;
-        y = nextY != null ? nextY : y;
-        middlewareData = {
-          ...middlewareData,
-          [name]: {
-            ...middlewareData[name],
-            ...data,
-          },
-        };
-        if (reset && resetCount <= 50) {
-          resetCount++;
-          if (typeof reset === "object") {
-            if (reset.placement) {
-              statefulPlacement = reset.placement;
-            }
-            if (reset.rects) {
-              rects =
-                reset.rects === true
-                  ? await platform2.getElementRects({
-                      reference,
-                      floating,
-                      strategy,
-                    })
-                  : reset.rects;
-            }
-            ({ x, y } = computeCoordsFromPlacement(
-              rects,
-              statefulPlacement,
-              rtl,
-            ));
-          }
-          i = -1;
-        }
-      }
-      return {
-        x,
-        y,
-        placement: statefulPlacement,
-        strategy,
-        middlewareData,
-      };
-    };
-    flip = function (options) {
-      if (options === void 0) {
-        options = {};
-      }
-      return {
-        name: "flip",
-        options,
-        async fn(state) {
-          var _middlewareData$arrow, _middlewareData$flip;
-          const {
-            placement,
-            middlewareData,
-            rects,
-            initialPlacement,
-            platform: platform2,
-            elements,
-          } = state;
-          const {
-            mainAxis: checkMainAxis = true,
-            crossAxis: checkCrossAxis = true,
-            fallbackPlacements: specifiedFallbackPlacements,
-            fallbackStrategy = "bestFit",
-            fallbackAxisSideDirection = "none",
-            flipAlignment = true,
-            ...detectOverflowOptions
-          } = evaluate(options, state);
-          if (
-            (_middlewareData$arrow = middlewareData.arrow) != null &&
-            _middlewareData$arrow.alignmentOffset
-          ) {
-            return {};
-          }
-          const side = getSide(placement);
-          const initialSideAxis = getSideAxis(initialPlacement);
-          const isBasePlacement =
-            getSide(initialPlacement) === initialPlacement;
-          const rtl = await (platform2.isRTL == null
-            ? void 0
-            : platform2.isRTL(elements.floating));
-          const fallbackPlacements =
-            specifiedFallbackPlacements ||
-            (isBasePlacement || !flipAlignment
-              ? [getOppositePlacement(initialPlacement)]
-              : getExpandedPlacements(initialPlacement));
-          const hasFallbackAxisSideDirection =
-            fallbackAxisSideDirection !== "none";
-          if (!specifiedFallbackPlacements && hasFallbackAxisSideDirection) {
-            fallbackPlacements.push(
-              ...getOppositeAxisPlacements(
-                initialPlacement,
-                flipAlignment,
-                fallbackAxisSideDirection,
-                rtl,
-              ),
-            );
-          }
-          const placements2 = [initialPlacement, ...fallbackPlacements];
-          const overflow = await detectOverflow(state, detectOverflowOptions);
-          const overflows = [];
-          let overflowsData =
-            ((_middlewareData$flip = middlewareData.flip) == null
-              ? void 0
-              : _middlewareData$flip.overflows) || [];
-          if (checkMainAxis) {
-            overflows.push(overflow[side]);
-          }
-          if (checkCrossAxis) {
-            const sides2 = getAlignmentSides(placement, rects, rtl);
-            overflows.push(overflow[sides2[0]], overflow[sides2[1]]);
-          }
-          overflowsData = [
-            ...overflowsData,
-            {
-              placement,
-              overflows,
-            },
-          ];
-          if (!overflows.every((side2) => side2 <= 0)) {
-            var _middlewareData$flip2, _overflowsData$filter;
-            const nextIndex =
-              (((_middlewareData$flip2 = middlewareData.flip) == null
-                ? void 0
-                : _middlewareData$flip2.index) || 0) + 1;
-            const nextPlacement = placements2[nextIndex];
-            if (nextPlacement) {
-              return {
-                data: {
-                  index: nextIndex,
-                  overflows: overflowsData,
-                },
-                reset: {
-                  placement: nextPlacement,
-                },
-              };
-            }
-            let resetPlacement =
-              (_overflowsData$filter = overflowsData
-                .filter((d) => d.overflows[0] <= 0)
-                .sort((a, b) => a.overflows[1] - b.overflows[1])[0]) == null
-                ? void 0
-                : _overflowsData$filter.placement;
-            if (!resetPlacement) {
-              switch (fallbackStrategy) {
-                case "bestFit": {
-                  var _overflowsData$filter2;
-                  const placement2 =
-                    (_overflowsData$filter2 = overflowsData
-                      .filter((d) => {
-                        if (hasFallbackAxisSideDirection) {
-                          const currentSideAxis = getSideAxis(d.placement);
-                          return (
-                            currentSideAxis === initialSideAxis || // Create a bias to the `y` side axis due to horizontal
-                            // reading directions favoring greater width.
-                            currentSideAxis === "y"
-                          );
+    // 开始监听文档变化，等待 #Wrapper 出现
+    observer.observe(document, { childList: true, subtree: true });
+
+    // 5. 【拦截原生主题注入】阻止 V2EX 动态注入 SITE_NIGHT script 和 tomorrow-night.css
+    const themeInterceptor = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+                // 拦截包含 SITE_NIGHT 的 script
+                if (node.tagName === "SCRIPT" && node.textContent) {
+                    if (node.textContent.includes("SITE_NIGHT")) {
+                        // 根据插件设置决定是否需要修改
+                        const wantDark = currentMode === "dark";
+                        if (wantDark && node.textContent.includes("SITE_NIGHT = 0")) {
+                            // 用户想要深色但原生注入浅色，移除这个 script
+                            node.remove();
+                        } else if (
+                            !wantDark &&
+                            node.textContent.includes("SITE_NIGHT = 1")
+                        ) {
+                            // 用户想要浅色但原生注入深色，移除这个 script
+                            node.remove();
                         }
-                        return true;
-                      })
-                      .map((d) => [
-                        d.placement,
-                        d.overflows
-                          .filter((overflow2) => overflow2 > 0)
-                          .reduce((acc, overflow2) => acc + overflow2, 0),
-                      ])
-                      .sort((a, b) => a[1] - b[1])[0]) == null
-                      ? void 0
-                      : _overflowsData$filter2[0];
-                  if (placement2) {
-                    resetPlacement = placement2;
-                  }
-                  break;
+                    }
                 }
-                case "initialPlacement":
-                  resetPlacement = initialPlacement;
-                  break;
-              }
-            }
-            if (placement !== resetPlacement) {
-              return {
-                reset: {
-                  placement: resetPlacement,
-                },
-              };
-            }
-          }
-          return {};
-        },
-      };
-    };
-    offset = function (options) {
-      if (options === void 0) {
-        options = 0;
-      }
-      return {
-        name: "offset",
-        options,
-        async fn(state) {
-          var _middlewareData$offse, _middlewareData$arrow;
-          const { x, y, placement, middlewareData } = state;
-          const diffCoords = await convertValueToCoords(state, options);
-          if (
-            placement ===
-              ((_middlewareData$offse = middlewareData.offset) == null
-                ? void 0
-                : _middlewareData$offse.placement) &&
-            (_middlewareData$arrow = middlewareData.arrow) != null &&
-            _middlewareData$arrow.alignmentOffset
-          ) {
-            return {};
-          }
-          return {
-            x: x + diffCoords.x,
-            y: y + diffCoords.y,
-            data: {
-              ...diffCoords,
-              placement,
-            },
-          };
-        },
-      };
-    };
-    shift = function (options) {
-      if (options === void 0) {
-        options = {};
-      }
-      return {
-        name: "shift",
-        options,
-        async fn(state) {
-          const { x, y, placement } = state;
-          const {
-            mainAxis: checkMainAxis = true,
-            crossAxis: checkCrossAxis = false,
-            limiter = {
-              fn: (_ref) => {
-                let { x: x2, y: y2 } = _ref;
-                return {
-                  x: x2,
-                  y: y2,
-                };
-              },
-            },
-            ...detectOverflowOptions
-          } = evaluate(options, state);
-          const coords = {
-            x,
-            y,
-          };
-          const overflow = await detectOverflow(state, detectOverflowOptions);
-          const crossAxis = getSideAxis(getSide(placement));
-          const mainAxis = getOppositeAxis(crossAxis);
-          let mainAxisCoord = coords[mainAxis];
-          let crossAxisCoord = coords[crossAxis];
-          if (checkMainAxis) {
-            const minSide = mainAxis === "y" ? "top" : "left";
-            const maxSide = mainAxis === "y" ? "bottom" : "right";
-            const min3 = mainAxisCoord + overflow[minSide];
-            const max3 = mainAxisCoord - overflow[maxSide];
-            mainAxisCoord = clamp(min3, mainAxisCoord, max3);
-          }
-          if (checkCrossAxis) {
-            const minSide = crossAxis === "y" ? "top" : "left";
-            const maxSide = crossAxis === "y" ? "bottom" : "right";
-            const min3 = crossAxisCoord + overflow[minSide];
-            const max3 = crossAxisCoord - overflow[maxSide];
-            crossAxisCoord = clamp(min3, crossAxisCoord, max3);
-          }
-          const limitedCoords = limiter.fn({
-            ...state,
-            [mainAxis]: mainAxisCoord,
-            [crossAxis]: crossAxisCoord,
-          });
-          return {
-            ...limitedCoords,
-            data: {
-              x: limitedCoords.x - x,
-              y: limitedCoords.y - y,
-            },
-          };
-        },
-      };
-    };
-  },
-});
 
-// node_modules/.pnpm/@floating-ui+dom@1.4.5/node_modules/@floating-ui/dom/dist/floating-ui.dom.mjs
-function getWindow(node) {
-  var _node$ownerDocument;
-  return (
-    (node == null
-      ? void 0
-      : (_node$ownerDocument = node.ownerDocument) == null
-        ? void 0
-        : _node$ownerDocument.defaultView) || window
-  );
-}
-function getComputedStyle$1(element) {
-  return getWindow(element).getComputedStyle(element);
-}
-function isNode(value) {
-  return value instanceof getWindow(value).Node;
-}
-function getNodeName(node) {
-  if (isNode(node)) {
-    return (node.nodeName || "").toLowerCase();
-  }
-  return "#document";
-}
-function isHTMLElement(value) {
-  return (
-    value instanceof HTMLElement ||
-    value instanceof getWindow(value).HTMLElement
-  );
-}
-function isShadowRoot(node) {
-  if (typeof ShadowRoot === "undefined") {
-    return false;
-  }
-  return (
-    node instanceof getWindow(node).ShadowRoot || node instanceof ShadowRoot
-  );
-}
-function isOverflowElement(element) {
-  const { overflow, overflowX, overflowY, display } =
-    getComputedStyle$1(element);
-  return (
-    /auto|scroll|overlay|hidden|clip/.test(overflow + overflowY + overflowX) &&
-    !["inline", "contents"].includes(display)
-  );
-}
-function isTableElement(element) {
-  return ["table", "td", "th"].includes(getNodeName(element));
-}
-function isContainingBlock(element) {
-  const safari = isSafari();
-  const css = getComputedStyle$1(element);
-  return (
-    css.transform !== "none" ||
-    css.perspective !== "none" ||
-    (css.containerType ? css.containerType !== "normal" : false) ||
-    (!safari && (css.backdropFilter ? css.backdropFilter !== "none" : false)) ||
-    (!safari && (css.filter ? css.filter !== "none" : false)) ||
-    ["transform", "perspective", "filter"].some((value) =>
-      (css.willChange || "").includes(value),
-    ) ||
-    ["paint", "layout", "strict", "content"].some((value) =>
-      (css.contain || "").includes(value),
-    )
-  );
-}
-function isSafari() {
-  if (typeof CSS === "undefined" || !CSS.supports) return false;
-  return CSS.supports("-webkit-backdrop-filter", "none");
-}
-function isLastTraversableNode(node) {
-  return ["html", "body", "#document"].includes(getNodeName(node));
-}
-function getCssDimensions(element) {
-  const css = getComputedStyle$1(element);
-  let width = parseFloat(css.width) || 0;
-  let height = parseFloat(css.height) || 0;
-  const hasOffset = isHTMLElement(element);
-  const offsetWidth = hasOffset ? element.offsetWidth : width;
-  const offsetHeight = hasOffset ? element.offsetHeight : height;
-  const shouldFallback =
-    round(width) !== offsetWidth || round(height) !== offsetHeight;
-  if (shouldFallback) {
-    width = offsetWidth;
-    height = offsetHeight;
-  }
-  return {
-    width,
-    height,
-    $: shouldFallback,
-  };
-}
-function isElement(value) {
-  return value instanceof Element || value instanceof getWindow(value).Element;
-}
-function unwrapElement(element) {
-  return !isElement(element) ? element.contextElement : element;
-}
-function getScale(element) {
-  const domElement = unwrapElement(element);
-  if (!isHTMLElement(domElement)) {
-    return createCoords(1);
-  }
-  const rect = domElement.getBoundingClientRect();
-  const { width, height, $: $2 } = getCssDimensions(domElement);
-  let x = ($2 ? round(rect.width) : rect.width) / width;
-  let y = ($2 ? round(rect.height) : rect.height) / height;
-  if (!x || !Number.isFinite(x)) {
-    x = 1;
-  }
-  if (!y || !Number.isFinite(y)) {
-    y = 1;
-  }
-  return {
-    x,
-    y,
-  };
-}
-function getVisualOffsets(element) {
-  const win = getWindow(element);
-  if (!isSafari() || !win.visualViewport) {
-    return noOffsets;
-  }
-  return {
-    x: win.visualViewport.offsetLeft,
-    y: win.visualViewport.offsetTop,
-  };
-}
-function shouldAddVisualOffsets(element, isFixed, floatingOffsetParent) {
-  if (isFixed === void 0) {
-    isFixed = false;
-  }
-  if (
-    !floatingOffsetParent ||
-    (isFixed && floatingOffsetParent !== getWindow(element))
-  ) {
-    return false;
-  }
-  return isFixed;
-}
-function getBoundingClientRect(
-  element,
-  includeScale,
-  isFixedStrategy,
-  offsetParent,
-) {
-  if (includeScale === void 0) {
-    includeScale = false;
-  }
-  if (isFixedStrategy === void 0) {
-    isFixedStrategy = false;
-  }
-  const clientRect = element.getBoundingClientRect();
-  const domElement = unwrapElement(element);
-  let scale = createCoords(1);
-  if (includeScale) {
-    if (offsetParent) {
-      if (isElement(offsetParent)) {
-        scale = getScale(offsetParent);
-      }
-    } else {
-      scale = getScale(element);
-    }
-  }
-  const visualOffsets = shouldAddVisualOffsets(
-    domElement,
-    isFixedStrategy,
-    offsetParent,
-  )
-    ? getVisualOffsets(domElement)
-    : createCoords(0);
-  let x = (clientRect.left + visualOffsets.x) / scale.x;
-  let y = (clientRect.top + visualOffsets.y) / scale.y;
-  let width = clientRect.width / scale.x;
-  let height = clientRect.height / scale.y;
-  if (domElement) {
-    const win = getWindow(domElement);
-    const offsetWin =
-      offsetParent && isElement(offsetParent)
-        ? getWindow(offsetParent)
-        : offsetParent;
-    let currentIFrame = win.frameElement;
-    while (currentIFrame && offsetParent && offsetWin !== win) {
-      const iframeScale = getScale(currentIFrame);
-      const iframeRect = currentIFrame.getBoundingClientRect();
-      const css = getComputedStyle(currentIFrame);
-      const left =
-        iframeRect.left +
-        (currentIFrame.clientLeft + parseFloat(css.paddingLeft)) *
-          iframeScale.x;
-      const top =
-        iframeRect.top +
-        (currentIFrame.clientTop + parseFloat(css.paddingTop)) * iframeScale.y;
-      x *= iframeScale.x;
-      y *= iframeScale.y;
-      width *= iframeScale.x;
-      height *= iframeScale.y;
-      x += left;
-      y += top;
-      currentIFrame = getWindow(currentIFrame).frameElement;
-    }
-  }
-  return rectToClientRect({
-    width,
-    height,
-    x,
-    y,
-  });
-}
-function getNodeScroll(element) {
-  if (isElement(element)) {
-    return {
-      scrollLeft: element.scrollLeft,
-      scrollTop: element.scrollTop,
-    };
-  }
-  return {
-    scrollLeft: element.pageXOffset,
-    scrollTop: element.pageYOffset,
-  };
-}
-function getDocumentElement(node) {
-  var _ref;
-  return (_ref =
-    (isNode(node) ? node.ownerDocument : node.document) || window.document) ==
-    null
-    ? void 0
-    : _ref.documentElement;
-}
-function convertOffsetParentRelativeRectToViewportRelativeRect(_ref) {
-  let { rect, offsetParent, strategy } = _ref;
-  const isOffsetParentAnElement = isHTMLElement(offsetParent);
-  const documentElement = getDocumentElement(offsetParent);
-  if (offsetParent === documentElement) {
-    return rect;
-  }
-  let scroll = {
-    scrollLeft: 0,
-    scrollTop: 0,
-  };
-  let scale = createCoords(1);
-  const offsets = createCoords(0);
-  if (
-    isOffsetParentAnElement ||
-    (!isOffsetParentAnElement && strategy !== "fixed")
-  ) {
-    if (
-      getNodeName(offsetParent) !== "body" ||
-      isOverflowElement(documentElement)
-    ) {
-      scroll = getNodeScroll(offsetParent);
-    }
-    if (isHTMLElement(offsetParent)) {
-      const offsetRect = getBoundingClientRect(offsetParent);
-      scale = getScale(offsetParent);
-      offsets.x = offsetRect.x + offsetParent.clientLeft;
-      offsets.y = offsetRect.y + offsetParent.clientTop;
-    }
-  }
-  return {
-    width: rect.width * scale.x,
-    height: rect.height * scale.y,
-    x: rect.x * scale.x - scroll.scrollLeft * scale.x + offsets.x,
-    y: rect.y * scale.y - scroll.scrollTop * scale.y + offsets.y,
-  };
-}
-function getClientRects(element) {
-  return Array.from(element.getClientRects());
-}
-function getWindowScrollBarX(element) {
-  return (
-    getBoundingClientRect(getDocumentElement(element)).left +
-    getNodeScroll(element).scrollLeft
-  );
-}
-function getDocumentRect(element) {
-  const html = getDocumentElement(element);
-  const scroll = getNodeScroll(element);
-  const body = element.ownerDocument.body;
-  const width = max2(
-    html.scrollWidth,
-    html.clientWidth,
-    body.scrollWidth,
-    body.clientWidth,
-  );
-  const height = max2(
-    html.scrollHeight,
-    html.clientHeight,
-    body.scrollHeight,
-    body.clientHeight,
-  );
-  let x = -scroll.scrollLeft + getWindowScrollBarX(element);
-  const y = -scroll.scrollTop;
-  if (getComputedStyle$1(body).direction === "rtl") {
-    x += max2(html.clientWidth, body.clientWidth) - width;
-  }
-  return {
-    width,
-    height,
-    x,
-    y,
-  };
-}
-function getParentNode(node) {
-  if (getNodeName(node) === "html") {
-    return node;
-  }
-  const result =
-    // Step into the shadow DOM of the parent of a slotted node.
-    node.assignedSlot || // DOM Element detected.
-    node.parentNode || // ShadowRoot detected.
-    (isShadowRoot(node) && node.host) || // Fallback.
-    getDocumentElement(node);
-  return isShadowRoot(result) ? result.host : result;
-}
-function getNearestOverflowAncestor(node) {
-  const parentNode = getParentNode(node);
-  if (isLastTraversableNode(parentNode)) {
-    return node.ownerDocument ? node.ownerDocument.body : node.body;
-  }
-  if (isHTMLElement(parentNode) && isOverflowElement(parentNode)) {
-    return parentNode;
-  }
-  return getNearestOverflowAncestor(parentNode);
-}
-function getOverflowAncestors(node, list) {
-  var _node$ownerDocument;
-  if (list === void 0) {
-    list = [];
-  }
-  const scrollableAncestor = getNearestOverflowAncestor(node);
-  const isBody =
-    scrollableAncestor ===
-    ((_node$ownerDocument = node.ownerDocument) == null
-      ? void 0
-      : _node$ownerDocument.body);
-  const win = getWindow(scrollableAncestor);
-  if (isBody) {
-    return list.concat(
-      win,
-      win.visualViewport || [],
-      isOverflowElement(scrollableAncestor) ? scrollableAncestor : [],
-    );
-  }
-  return list.concat(
-    scrollableAncestor,
-    getOverflowAncestors(scrollableAncestor),
-  );
-}
-function getViewportRect(element, strategy) {
-  const win = getWindow(element);
-  const html = getDocumentElement(element);
-  const visualViewport = win.visualViewport;
-  let width = html.clientWidth;
-  let height = html.clientHeight;
-  let x = 0;
-  let y = 0;
-  if (visualViewport) {
-    width = visualViewport.width;
-    height = visualViewport.height;
-    const visualViewportBased = isSafari();
-    if (!visualViewportBased || (visualViewportBased && strategy === "fixed")) {
-      x = visualViewport.offsetLeft;
-      y = visualViewport.offsetTop;
-    }
-  }
-  return {
-    width,
-    height,
-    x,
-    y,
-  };
-}
-function getInnerBoundingClientRect(element, strategy) {
-  const clientRect = getBoundingClientRect(element, true, strategy === "fixed");
-  const top = clientRect.top + element.clientTop;
-  const left = clientRect.left + element.clientLeft;
-  const scale = isHTMLElement(element) ? getScale(element) : createCoords(1);
-  const width = element.clientWidth * scale.x;
-  const height = element.clientHeight * scale.y;
-  const x = left * scale.x;
-  const y = top * scale.y;
-  return {
-    width,
-    height,
-    x,
-    y,
-  };
-}
-function getClientRectFromClippingAncestor(
-  element,
-  clippingAncestor,
-  strategy,
-) {
-  let rect;
-  if (clippingAncestor === "viewport") {
-    rect = getViewportRect(element, strategy);
-  } else if (clippingAncestor === "document") {
-    rect = getDocumentRect(getDocumentElement(element));
-  } else if (isElement(clippingAncestor)) {
-    rect = getInnerBoundingClientRect(clippingAncestor, strategy);
-  } else {
-    const visualOffsets = getVisualOffsets(element);
-    rect = {
-      ...clippingAncestor,
-      x: clippingAncestor.x - visualOffsets.x,
-      y: clippingAncestor.y - visualOffsets.y,
-    };
-  }
-  return rectToClientRect(rect);
-}
-function hasFixedPositionAncestor(element, stopNode) {
-  const parentNode = getParentNode(element);
-  if (
-    parentNode === stopNode ||
-    !isElement(parentNode) ||
-    isLastTraversableNode(parentNode)
-  ) {
-    return false;
-  }
-  return (
-    getComputedStyle$1(parentNode).position === "fixed" ||
-    hasFixedPositionAncestor(parentNode, stopNode)
-  );
-}
-function getClippingElementAncestors(element, cache) {
-  const cachedResult = cache.get(element);
-  if (cachedResult) {
-    return cachedResult;
-  }
-  let result = getOverflowAncestors(element).filter(
-    (el) => isElement(el) && getNodeName(el) !== "body",
-  );
-  let currentContainingBlockComputedStyle = null;
-  const elementIsFixed = getComputedStyle$1(element).position === "fixed";
-  let currentNode = elementIsFixed ? getParentNode(element) : element;
-  while (isElement(currentNode) && !isLastTraversableNode(currentNode)) {
-    const computedStyle = getComputedStyle$1(currentNode);
-    const currentNodeIsContaining = isContainingBlock(currentNode);
-    if (!currentNodeIsContaining && computedStyle.position === "fixed") {
-      currentContainingBlockComputedStyle = null;
-    }
-    const shouldDropCurrentNode = elementIsFixed
-      ? !currentNodeIsContaining && !currentContainingBlockComputedStyle
-      : (!currentNodeIsContaining &&
-          computedStyle.position === "static" &&
-          !!currentContainingBlockComputedStyle &&
-          ["absolute", "fixed"].includes(
-            currentContainingBlockComputedStyle.position,
-          )) ||
-        (isOverflowElement(currentNode) &&
-          !currentNodeIsContaining &&
-          hasFixedPositionAncestor(element, currentNode));
-    if (shouldDropCurrentNode) {
-      result = result.filter((ancestor) => ancestor !== currentNode);
-    } else {
-      currentContainingBlockComputedStyle = computedStyle;
-    }
-    currentNode = getParentNode(currentNode);
-  }
-  cache.set(element, result);
-  return result;
-}
-function getClippingRect(_ref) {
-  let { element, boundary, rootBoundary, strategy } = _ref;
-  const elementClippingAncestors =
-    boundary === "clippingAncestors"
-      ? getClippingElementAncestors(element, this._c)
-      : [].concat(boundary);
-  const clippingAncestors = [...elementClippingAncestors, rootBoundary];
-  const firstClippingAncestor = clippingAncestors[0];
-  const clippingRect = clippingAncestors.reduce(
-    (accRect, clippingAncestor) => {
-      const rect = getClientRectFromClippingAncestor(
-        element,
-        clippingAncestor,
-        strategy,
-      );
-      accRect.top = max2(rect.top, accRect.top);
-      accRect.right = min2(rect.right, accRect.right);
-      accRect.bottom = min2(rect.bottom, accRect.bottom);
-      accRect.left = max2(rect.left, accRect.left);
-      return accRect;
-    },
-    getClientRectFromClippingAncestor(element, firstClippingAncestor, strategy),
-  );
-  return {
-    width: clippingRect.right - clippingRect.left,
-    height: clippingRect.bottom - clippingRect.top,
-    x: clippingRect.left,
-    y: clippingRect.top,
-  };
-}
-function getDimensions(element) {
-  return getCssDimensions(element);
-}
-function getRectRelativeToOffsetParent(element, offsetParent, strategy) {
-  const isOffsetParentAnElement = isHTMLElement(offsetParent);
-  const documentElement = getDocumentElement(offsetParent);
-  const isFixed = strategy === "fixed";
-  const rect = getBoundingClientRect(element, true, isFixed, offsetParent);
-  let scroll = {
-    scrollLeft: 0,
-    scrollTop: 0,
-  };
-  const offsets = createCoords(0);
-  if (isOffsetParentAnElement || (!isOffsetParentAnElement && !isFixed)) {
-    if (
-      getNodeName(offsetParent) !== "body" ||
-      isOverflowElement(documentElement)
-    ) {
-      scroll = getNodeScroll(offsetParent);
-    }
-    if (isHTMLElement(offsetParent)) {
-      const offsetRect = getBoundingClientRect(
-        offsetParent,
-        true,
-        isFixed,
-        offsetParent,
-      );
-      offsets.x = offsetRect.x + offsetParent.clientLeft;
-      offsets.y = offsetRect.y + offsetParent.clientTop;
-    } else if (documentElement) {
-      offsets.x = getWindowScrollBarX(documentElement);
-    }
-  }
-  return {
-    x: rect.left + scroll.scrollLeft - offsets.x,
-    y: rect.top + scroll.scrollTop - offsets.y,
-    width: rect.width,
-    height: rect.height,
-  };
-}
-function getTrueOffsetParent(element, polyfill) {
-  if (
-    !isHTMLElement(element) ||
-    getComputedStyle$1(element).position === "fixed"
-  ) {
-    return null;
-  }
-  if (polyfill) {
-    return polyfill(element);
-  }
-  return element.offsetParent;
-}
-function getContainingBlock(element) {
-  let currentNode = getParentNode(element);
-  while (isHTMLElement(currentNode) && !isLastTraversableNode(currentNode)) {
-    if (isContainingBlock(currentNode)) {
-      return currentNode;
-    } else {
-      currentNode = getParentNode(currentNode);
-    }
-  }
-  return null;
-}
-function getOffsetParent(element, polyfill) {
-  const window2 = getWindow(element);
-  if (!isHTMLElement(element)) {
-    return window2;
-  }
-  let offsetParent = getTrueOffsetParent(element, polyfill);
-  while (
-    offsetParent &&
-    isTableElement(offsetParent) &&
-    getComputedStyle$1(offsetParent).position === "static"
-  ) {
-    offsetParent = getTrueOffsetParent(offsetParent, polyfill);
-  }
-  if (
-    offsetParent &&
-    (getNodeName(offsetParent) === "html" ||
-      (getNodeName(offsetParent) === "body" &&
-        getComputedStyle$1(offsetParent).position === "static" &&
-        !isContainingBlock(offsetParent)))
-  ) {
-    return window2;
-  }
-  return offsetParent || getContainingBlock(element) || window2;
-}
-function isRTL(element) {
-  return getComputedStyle(element).direction === "rtl";
-}
-var min2,
-  max2,
-  round,
-  createCoords,
-  noOffsets,
-  getElementRects,
-  platform,
-  computePosition2;
-var init_floating_ui_dom = __esm({
-  "node_modules/.pnpm/@floating-ui+dom@1.4.5/node_modules/@floating-ui/dom/dist/floating-ui.dom.mjs"() {
-    "use strict";
-    init_floating_ui_core();
-    init_floating_ui_core();
-    min2 = Math.min;
-    max2 = Math.max;
-    round = Math.round;
-    createCoords = (v) => ({
-      x: v,
-      y: v,
+                // 拦截 tomorrow-night.css 或 tomorrow.css 的 link
+                if (node.tagName === "LINK" && node.rel === "stylesheet") {
+                    const href = node.href || "";
+                    const wantDark = currentMode === "dark";
+
+                    if (!wantDark && href.includes("tomorrow-night.css")) {
+                        // 用户想要浅色但注入了深色高亮 CSS，替换为浅色版本
+                        node.href = href.replace("tomorrow-night.css", "tomorrow.css");
+                    } else if (
+                        wantDark &&
+                        href.includes("tomorrow.css") &&
+                        !href.includes("tomorrow-night.css")
+                    ) {
+                        // 用户想要深色但注入了浅色高亮 CSS，替换为深色版本
+                        node.href = href.replace("tomorrow.css", "tomorrow-night.css");
+                    }
+                }
+            }
+        }
     });
-    noOffsets = /* @__PURE__ */ createCoords(0);
-    getElementRects = async function (_ref) {
-      let { reference, floating, strategy } = _ref;
-      const getOffsetParentFn = this.getOffsetParent || getOffsetParent;
-      const getDimensionsFn = this.getDimensions;
-      return {
-        reference: getRectRelativeToOffsetParent(
-          reference,
-          await getOffsetParentFn(floating),
-          strategy,
-        ),
-        floating: {
-          x: 0,
-          y: 0,
-          ...(await getDimensionsFn(floating)),
-        },
-      };
-    };
-    platform = {
-      convertOffsetParentRelativeRectToViewportRelativeRect,
-      getDocumentElement,
-      getClippingRect,
-      getOffsetParent,
-      getElementRects,
-      getClientRects,
-      getDimensions,
-      getScale,
-      isElement,
-      isRTL,
-    };
-    computePosition2 = (reference, floating, options) => {
-      const cache = /* @__PURE__ */ new Map();
-      const mergedOptions = {
-        platform,
-        ...options,
-      };
-      const platformWithCache = {
-        ...mergedOptions.platform,
-        _c: cache,
-      };
-      return computePosition(reference, floating, {
-        ...mergedOptions,
-        platform: platformWithCache,
-      });
-    };
-  },
-});
 
-// src/components/popup.ts
-function createPopup(props) {
-  const {
-    root,
-    trigger,
-    triggerType = "click",
-    content,
-    options,
-    onOpen,
-    onClose,
-    placement = "bottom-start",
-    offsetOptions = { mainAxis: 5, crossAxis: 5 },
-  } = props;
-  const $popupContent = $('<div class="v2p-popup-content">');
-  const $popup = $('<div class="v2p-popup" tabindex="0">')
-    .css("visibility", "hidden")
-    .append($popupContent);
-  root.append($popup);
-  if (content) {
-    $popup.append(content);
-  }
-  const popup = $popup.get(0);
-  const handleClickOutside = (ev) => {
-    if ($(ev.target).closest(popup).length === 0) {
-      handlePopupClose();
-    }
-  };
-  const handlePopupClose = () => {
-    $popup.css("visibility", "hidden");
-    $(document).off("click", handleClickOutside);
-    onClose?.();
-    popupControl2.onClose?.();
-  };
-  const handlePopupOpen = ($reference) => {
-    if (!$reference) {
-      return;
-    }
-    setTimeout(() => {
-      $(document).on("click", handleClickOutside);
-    });
-    const referenceElement = $reference.get(0);
-    computePosition2(referenceElement, popup, {
-      placement,
-      middleware: [offset(offsetOptions), flip(), shift({ padding: 8 })],
-      ...options,
-    })
-      .then(({ x, y }) => {
-        Object.assign(popup.style, {
-          left: `${x}px`,
-          top: `${y}px`,
-        });
-        $popup.css("visibility", "visible");
-      })
-      .catch(() => {
-        handlePopupClose();
-        createToast({ message: "\u274C Popup \u6E32\u67D3\u5931\u8D25" });
-      });
-    onOpen?.();
-  };
-  const popupControl2 = {
-    $content: $popupContent,
-    isOver: false,
-    open: (reference) => {
-      handlePopupOpen(reference);
-    },
-    close: handlePopupClose,
-  };
-  if (triggerType === "hover") {
-    $popup.on("mouseover", () => {
-      if (!popupControl2.isOver) {
-        popupControl2.isOver = true;
-        $popup.off("mouseleave").on("mouseleave", () => {
-          popupControl2.isOver = false;
-          setTimeout(() => {
-            if (!popupControl2.isOver) {
-              popupControl2.close();
-            }
-          }, hoverDelay);
-        });
-      }
-    });
-  }
-  trigger?.on("click", () => {
-    if (popup.style.visibility !== "hidden") {
-      handlePopupClose();
-    } else {
-      handlePopupOpen(trigger);
-    }
-  });
-  return popupControl2;
-}
-var hoverDelay;
-var init_popup = __esm({
-  "src/components/popup.ts"() {
-    "use strict";
-    init_floating_ui_dom();
-    init_toast();
-    hoverDelay = 350;
-  },
-});
-
-// src/contents/topic/avatar.ts
-function processAvatar(params) {
-  const {
-    $trigger,
-    popupControl: popupControl2,
-    commentData,
-    shouldWrap = true,
-    openInNewTab = false,
-    onSetTagsClick,
-  } = params;
-  const { memberName, memberAvatar, memberLink } = commentData;
-  let abortController = null;
-  const handleOver = () => {
-    popupControl2.close();
-    popupControl2.open($trigger);
-    const $content = $(`
-      <div class="v2p-member-card">
-        <div class="v2p-info">
-          <div class="v2p-info-left">
-            <a class="v2p-avatar-box" href="${memberLink}" target="${openInNewTab ? "_blank" : "_self"}">
-              <img class="v2p-avatar" src="${memberAvatar}">
-            </a>
-          </div>
-
-          <div class="v2p-info-right">
-            <div class="v2p-username">
-              <a href="${memberLink}" target="${openInNewTab ? "_blank" : "_self"}">${memberName}</a>
-            </div>
-            <div class="v2p-no v2p-loading"></div>
-            <div class="v2p-created-date v2p-loading"></div>
-          </div>
-
-          </div>
-
-          <div class="v2p-bio" style="disply:none;"></div>
-
-          <div class="v2p-member-card-actions"></div>
-      </div>
-    `);
-    popupControl2.$content.empty().append($content);
-
-    void (async () => {
-      if (!memberDataCache.has(memberName)) {
-        abortController = new AbortController();
-        popupControl2.onClose = () => {
-          abortController?.abort();
-        };
-        try {
-          const memberData = await fetchUserInfo(memberName, {
-            signal: abortController.signal,
-          });
-          memberDataCache.set(memberName, {
-            ...memberData,
-            registerDays: getRegisterDays(memberData.created),
-          });
-        } catch (err) {
-          if (err instanceof Error) {
-            $content.html(`<span>${err.message}</span>`);
-            if (err.cause === 404) {
-              memberDataCache.set(memberName, banned);
-            }
-          }
-          return null;
-        }
-      }
-      const data = memberDataCache.get(memberName);
-      if (typeof data === "object") {
-        $content
-          .find(".v2p-no")
-          .removeClass("v2p-loading")
-          .text(`V2EX \u7B2C ${data.id} \u53F7\u4F1A\u5458`);
-        $content
-          .find(".v2p-created-date")
-          .removeClass("v2p-loading")
-          .text(`\u52A0\u5165\u4E8E ${formatTimestamp(data.created)}`);
-        if (data.registerDays <= 30) {
-          $content
-            .find(".v2p-info-right")
-            .append(
-              `<div class="v2p-register-days" style="margin: 5px 0;">${data.registerDays <= 15 ? "15" : "30"} \u5929\u5185\u6CE8\u518C</div>`,
-            );
-        }
-        if (data.bio && data.bio.trim().length > 0) {
-          $content.find(".v2p-bio").css("disply", "block").text(data.bio);
-        }
-      } else if (typeof data === "symbol" && data === banned) {
-        $content.html(
-          "<span>\u67E5\u65E0\u6B64\u7528\u6237\uFF0C\u7591\u4F3C\u5DF2\u88AB\u5C01\u7981</span>",
-        );
-      }
-    })();
-  };
-  let isOver = false;
-  $trigger
-    .on("mouseover", () => {
-      isOver = true;
-      setTimeout(() => {
-        if (isOver) {
-          handleOver();
-        }
-      }, hoverDelay);
-    })
-    .on("mouseleave", () => {
-      isOver = false;
-      setTimeout(() => {
-        if (!popupControl2.isOver && !isOver) {
-          popupControl2.close();
-        }
-      }, hoverDelay);
-    });
-  if (shouldWrap) {
-    $trigger.wrap(
-      `<a href="/member/${commentData.memberName}" target="_blank" style="cursor: pointer;">`,
-    );
-  }
-}
-var banned, memberDataCache;
-var init_avatar = __esm({
-  "src/contents/topic/avatar.ts"() {
-    "use strict";
-    init_button();
-    init_popup();
-    init_services();
-    init_utils();
-    init_helpers();
-    init_content();
-    banned = Symbol();
-    memberDataCache = /* @__PURE__ */ new Map();
-  },
-});
-
-// src/contents/topic/comment.ts
-function handleFilteredComments() {}
-function processActions($cellDom, data) {
-  const $actions = $cellDom.find(
-    "> table > tbody > tr > td:last-of-type > .fr",
-  );
-  const $controls = $('<span class="v2p-controls">');
-  const $thankIcon = $(
-    `<span
-      class="v2p-control v2p-control-thank"
-      data-id="${data.id}"
-      data-member-name="${data.memberName}"
-     >
-        <i data-lucide="heart"></i>
-     </span>`,
-  );
-  const thankArea = $actions.find("> .thank_area");
-  const thanked = thankArea.hasClass("thanked");
-  if (thanked) {
-    $thankIcon.addClass("v2p-thanked");
-    $controls.append($("<a>").append($thankIcon));
-  } else {
-    const thankEle = thankArea.find("> .thank");
-    const $hide = thankEle.eq(0).removeClass("thank");
-    const $thank = thankEle.eq(1).removeClass("thank");
-    $hide.html(
-      `<span class="v2p-control v2p-hover-btn v2p-control-hide"><i data-lucide="eye-off"></i></span>`,
-    );
-    $thankIcon.addClass("v2p-hover-btn").replaceAll($thank);
-    $controls.append($hide).append($thankIcon);
-  }
-  const $reply = $actions.find("a:last-of-type");
-  // 删除原来的图标 / 文本
-  $reply.empty();
-  // 插入统一风格的按钮
-  $reply.append(
-    `<span class="v2p-control v2p-hover-btn v2p-control-reply">
-      <i data-lucide="message-square"></i>
-   </span>`,
-  );
-  $controls.append($reply);
-
-  thankArea.remove();
-  const floorNum = $actions.find(".no").clone();
-
-  $reply.on("click", () => {
-    const replyVal = $replyTextArea.val();
-    if (typeof replyVal === "string" && replyVal.length > 0) {
-      const floor = floorNum.text();
-      const replyComment = commentDataList.find((it) => it.floor === floor);
-      if (replyComment) {
-        const replyMemberName = replyComment.memberName;
-        const moreThanOneReply =
-          commentDataList.findIndex(
-            (it) => it.memberName === replyMemberName && it.floor !== floor,
-          ) !== -1;
-        if (moreThanOneReply) {
-          insertTextToReplyInput(`#${floor} `);
-        } else {
-          const $page = $(".v2p-paging")
-            .eq(0)
-            .find(".page_normal, .page_current");
-          if ($page.length > 1) {
-            const onLastPage = $page.last().hasClass("page_current");
-            if (!onLastPage) {
-              insertTextToReplyInput(`#${floor} `);
-            }
-          }
-        }
-      }
-    }
-  });
-
-  // ★ 移动端：点击某一楼（包括楼中楼）高亮这一楼的工具栏
-  if ($body.hasClass("v2p-mobile")) {
-    $cellDom.on("click.v2p-controls", function (ev) {
-      const $target = $(ev.target);
-
-      // 点到工具栏本身 / 链接 / 图片 / 表单控件时，不触发「高亮当前楼」逻辑
-      if (
-        $target.closest(".v2p-controls").length ||
-        $target.closest("a, img, button, input, textarea").length
-      ) {
-        return;
-      }
-
-      // ★ 关键：先在当前这楼的 handler 里阻止事件继续冒泡
-      // 这样即使当前楼是楼中楼，也不会再触发父楼的 handler
-      ev.stopPropagation();
-
-      // 先把所有楼的工具栏隐藏
-      $('.cell[id^="r_"] .v2p-controls').css("opacity", 0);
-
-      // 再只高亮这一楼（用 this = 当前绑定 handler 的 cell）
-      $(this).find(".v2p-controls").css("opacity", 0.5);
-    });
-  }
-
-  $actions.empty().append($controls, floorNum);
-}
-
-async function handleComments() {
-  const storage = getStorageSync();
-  const tagData = void 0;
-  const options = storage["options" /* Options */];
-  if (false && options.reply.preload !== "off") {
-    const $paging = $(".v2p-paging");
-    if ($paging.length > 0) {
-      const $pagingTop = $paging.eq(0);
-      const $pagingBottom = $paging.eq(1);
-      const $pageNormal = $paging.find(".page_normal");
-      const $pagingTopNormal = $pagingTop.find(".page_normal");
-      const toastControl = createToast({
-        message:
-          "\u6B63\u5728\u9884\u52A0\u8F7D\u56DE\u590D\uFF0C\u8BF7\u7A0D\u5019...",
-        duration: 0,
-      });
-      try {
-        const $pagingBottomNormal = $pagingBottom.find(".page_normal");
-        const $pageCurrent = $pagingTop.find(".page_current");
-        const currentPage = $pageCurrent.text();
-        if (currentPage === "1") {
-          const pages = [];
-          $pagingTopNormal.each((i, ele) => {
-            if (i <= 1) {
-              if (ele.textContent) {
-                ele.classList.add("page_current");
-                ele.classList.remove("page_normal");
-                $pagingBottomNormal
-                  .eq(i)
-                  .addClass("page_current")
-                  .removeClass("page_normal");
-                pages.push(ele.textContent);
-              }
-            }
-          });
-          if (pages.length > 0) {
-            const pagesText = await Promise.all(
-              pages.map((p) => crawlTopicPage(window.location.pathname, p)),
-            );
-            pagesText.map((pageText) => {
-              $pagingBottom.before($(pageText).find('.cell[id^="r_"]'));
+    // 监听 head 和 body 的变化
+    const startThemeInterceptor = () => {
+        if (document.head) {
+            themeInterceptor.observe(document.head, {
+                childList: true,
+                subtree: true,
             });
-          }
-          updateCommentCells();
         }
-        toastControl.clear();
-      } catch (err) {
-        if (err instanceof Error) {
-          console.error(
-            `\u52A0\u8F7D\u591A\u9875\u56DE\u590D\u51FA\u9519\uFF1A${err.message}`,
-          );
+        if (document.body) {
+            themeInterceptor.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+        } else {
+            // body 还没出现，等待后再监听
+            const bodyWatcher = new MutationObserver(() => {
+                if (document.body) {
+                    themeInterceptor.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                    });
+                    bodyWatcher.disconnect();
+                }
+            });
+            bodyWatcher.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+            });
         }
-        createToast({
-          message: "\u274C \u52A0\u8F7D\u591A\u9875\u56DE\u590D\u5931\u8D25",
-        });
-        $pageNormal.removeClass("page_current").addClass("page_normal");
-      }
+    };
+
+    if (document.head) {
+        startThemeInterceptor();
+    } else {
+        requestAnimationFrame(startThemeInterceptor);
     }
-  }
-  if (options.replyContent.hideReplyTime) {
-    $(".cell .ago").addClass("v2p-auto-hide");
-  }
-  const canHideRefName =
-    options.nestedReply.display === "indent" &&
-    !!options.replyContent.hideRefName;
-  commentDataList = getCommentDataList({
-    options,
-    $commentTableRows,
-    $commentCells,
-  });
-  {
-    const memberNames = /* @__PURE__ */ new Set([topicOwnerName]);
-    $commentCells.each((i, cellDom) => {
-      const currentComment = commentDataList.at(i);
-      if (currentComment?.id !== cellDom.id) {
-        return;
-      }
-      const $cellDom = $(cellDom);
-      const { memberName, thanked } = currentComment;
-      memberNames.add(memberName);
-      processAvatar({
-        $trigger: $cellDom.find(".avatar, .dark"),
-        popupControl,
-        commentData: currentComment,
-        openInNewTab: options.openInNewTab,
-      });
-      if (memberName === loginName && !options.hideAccount) {
-        $cellDom
-          .find(".badges")
-          .append(
-            `<div class="badge ${memberName === topicOwnerName ? "mod" : "you"}">YOU</div>`,
-          );
-      }
-      const $likesBox = $cellDom.find(".small.fade").addClass("v2p-likes-box");
-      $likesBox
-        .find('img[alt="\u2764\uFE0F"]')
-        .replaceWith(
-          '<span class="v2p-icon-heart"><i data-lucide="heart"></i></span>',
-        );
-      if (thanked) {
-        $likesBox.addClass("v2p-thanked");
-      }
-      processActions($cellDom, currentComment);
-      if (canHideRefName) {
-        if (currentComment.contentHtml) {
-          $cellDom.find(".reply_content").html(currentComment.contentHtml);
-        }
-      }
-    });
+})();
+(function () {
+    "use strict";
+    var style = `
+:root {
+    --zidx-serach: 100;
+    --zidx-tabs: 10;
+    --zidx-tools-card: 10;
+    --zidx-reply-box: 99;
+    --zidx-modal-header: 50;
+    --zidx-modal-mask: 888;
+    --zidx-toast: 999;
+    --zidx-tip: 99;
+    --zidx-popup: 99;
+    --zidx-expand-mask: 10;
+    --zidx-expand-btn: 20;
+    --v2p-underline-offset: 0.5ex;
+    --v2p-layout-column-gap: 25px;
+    --v2p-layout-row-gap: 20px;
+    --v2p-nav-height: 55px;
+    --v2p-tp-item-x: 18px;
+    --v2p-tp-item-y: 18px;
+    --v2p-tp-tabs-pd: 10px;
+    --v2p-tp-nested-pd: 10px 5px 2px 10px;
+    --v2p-tp-preview-pd: 20px;
+    --v2p-emoji-size: 21px;
+    --v2p-box-radius: 10px;
+}
+/* === 搜索框防闪烁核心样式 === */
+/* 只有当 html 标签确切拥有 v2p-theme-dark-default 类时，搜索框才变黑 */
+html.v2p-theme-dark-default body #search-container {
+    background-color: #2d333b !important;
+    border-color: #444c56 !important;
+    transition: background-color 0.1s ease; /* 极短的过渡，掩盖微小渲染延迟 */
+}
 
-    updateCommentCells();
+html.v2p-theme-dark-default body #search-container #search-result {
+    background-color: #22272e !important;
+    border-color: #444c56 !important;
+}
+:root body {
+    --v2p-color-main-50: #f7f9fb;
+    --v2p-color-main-100: #e6e6e6;
+    --v2p-color-main-200: #ececec;
+    --v2p-color-main-300: #cbd5e1;
+    --v2p-color-main-350: #94a3b8cc;
+    --v2p-color-main-400: #94a3b8;
+    --v2p-color-main-500: #64748b;
+    --v2p-color-main-600: #475569;
+    --v2p-color-main-700: #334155;
+    --v2p-color-main-800: #1e293b;
+    --v2p-color-accent-50: #ecfdf5;
+    --v2p-color-accent-100: #d1fae5;
+    --v2p-color-accent-200: #a7f3d0;
+    --v2p-color-accent-300: #6ee7b7;
+    --v2p-color-accent-400: #34d399;
+    --v2p-color-accent-500: #10b981;
+    --v2p-color-accent-600: #059669;
+    --v2p-color-orange-50: #fff7ed;
+    --v2p-color-orange-100: #ffedd5;
+    --v2p-color-orange-400: #fb923c;
+    --v2p-color-background: #f2f3f5;
+    --v2p-color-foreground: var(--v2p-color-main-800);
+    --v2p-color-selection-foreground: var(--v2p-color-main-100);
+    --v2p-color-selection-background: var(--v2p-color-main-700);
+    --v2p-color-selection-background-img: var(--v2p-color-main-500);
+    --v2p-color-font-secondary: var(--v2p-color-main-600);
+    --v2p-color-font-tertiary: var(--v2p-color-main-500);
+    --v2p-color-font-quaternary: var(--v2p-color-main-400);
+    --v2p-color-button-background: var(--v2p-color-main-100);
+    --v2p-color-button-foreground: var(--v2p-color-main-500);
+    --v2p-color-button-background-hover: var(--v2p-color-main-200);
+    --v2p-color-button-foreground-hover: var(--v2p-color-main-600);
+    --v2p-color-bg-content: #fff;
+    --v2p-color-bg-content-rgb: 255, 255, 255;
+    --v2p-color-bg-footer: var(--v2p-color-bg-content);
+    --v2p-color-bg-hover-btn: rgb(226 232 240 / 70%);
+    --v2p-color-bg-subtle: #f7f7f7;
+    --v2p-color-bg-input: var(--v2p-color-main-50);
+    --v2p-color-bg-search: var(--v2p-color-main-100);
+    --v2p-color-bg-search-active: var(--v2p-color-main-200);
+    --v2p-color-bg-widget: rgb(255 255 255 / 70%);
+    --v2p-color-bg-reply: var(--v2p-color-main-100);
+    --v2p-color-bg-tooltip: var(--v2p-color-bg-content);
+    --v2p-color-bg-tabs: var(--v2p-color-main-100);
+    --v2p-color-bg-tpr: var(--v2p-color-main-100);
+    --v2p-color-bg-avatar: var(--v2p-color-main-300);
+    --v2p-color-bg-block: var(--v2p-color-main-100);
+    --v2p-color-bg-block-darker: var(--v2p-color-main-300);
+    --v2p-color-bg-link: var(--v2p-color-main-100);
+    --v2p-color-bg-link-hover: var(--v2p-color-main-200);
+    --v2p-color-tabs: var(--v2p-color-foreground);
+    --v2p-color-heart: #ef4444;
+    --v2p-color-heart-fill: #fee2e2;
+    --v2p-color-mask: rgb(0 0 0 / 25%);
+    --v2p-color-divider: var(--v2p-color-main-200);
+    --v2p-color-border: var(--v2p-color-main-200);
+    --v2p-color-input-border: var(--v2p-color-main-300);
+    --v2p-color-border-darker: var(--v2p-color-main-300);
+    --v2p-color-link-visited: var(--v2p-color-main-400);
+    --v2p-color-error: #ef4444;
+    --v2p-color-bg-error: #fee2e2;
+    --v2p-color-cell-num: var(--v2p-color-main-350);
+    --v2p-box-shadow: 0 3px 5px 0 rgb(0 0 0 / 4%);
+    --v2p-widget-shadow: 0 9px 24px -3px rgb(0 0 0 / 6%),
+        0 4px 8px -1px rgb(0 0 0 /12%);
+    --v2p-toast-shadow: 0 6px 16px 0 rgb(0 0 0 / 8%),
+        0 3px 6px -4px rgb(0 0 0 / 12%), 0 9px 28px 8px rgb(0 0 0 / 5%);
+    --color-fade: var(--v2p-color-font-secondary);
+    --color-gray: var(--v2p-color-font-secondary);
+    --link-color: var(--v2p-color-foreground);
+    --link-darker-color: var(--v2p-color-main-600);
+    --link-hover-color: var(--v2p-color-foreground);
+    --link-caution-color: var(--v2p-color-orange-400);
+    --box-border-color: var(--v2p-color-border);
+    --box-foreground-color: var(--v2p-color-foreground);
+    --box-background-color: var(--v2p-color-bg-content);
+    --box-background-alt-color: var(--v2p-color-main-100);
+    --box-background-hover-color: var(--v2p-color-main-200);
+    --box-border-focus-color: var(--v2p-color-main-200);
+    --box-border-radius: var(--v2p-box-radius);
+    --button-background-color: var(--v2p-color-button-background);
+    --button-foreground-color: var(--v2p-color-button-foreground);
+    --button-hover-color: var(--v2p-color-button-background-hover);
+    --button-background-hover-color: var(--v2p-color-button-background-hover);
+    --button-foreground-hover-color: var(--v2p-color-button-foreground-hover);
+    --button-border-color: var(--v2p-color-main-300);
+    --button-border-hover-color: var(--v2p-color-main-400);
 
-    $(".v2p-control-thank").on("click", (ev) => {
-      ev.stopPropagation();
-      const id = ev.currentTarget.dataset.id;
-      const memberName = ev.currentTarget.dataset.memberName;
-      if (typeof id === "string" && typeof memberName === "string") {
+    font-family: system-ui, sans-serif;
+    color: var(--v2p-color-foreground);
+    background-color: var(--v2p-color-background);
+}
+:root body.v2p-theme-light-default,
+:root body .v2p-theme-light-default {
+    --v2p-color-main-50: #f7f9fb;
+    --v2p-color-main-100: #f2f2f2;
+    --v2p-color-main-200: #ececec;
+    --v2p-color-main-300: #cbd5e1;
+    --v2p-color-main-350: #94a3b8cc;
+    --v2p-color-main-400: #94a3b8;
+    --v2p-color-main-500: #64748b;
+    --v2p-color-main-600: #475569;
+    --v2p-color-main-700: #334155;
+    --v2p-color-main-800: #1e293b;
+    --v2p-color-accent-50: #ecfdf5;
+    --v2p-color-accent-100: #d1fae5;
+    --v2p-color-accent-200: #a7f3d0;
+    --v2p-color-accent-300: #6ee7b7;
+    --v2p-color-accent-400: #34d399;
+    --v2p-color-accent-500: #10b981;
+    --v2p-color-accent-600: #059669;
+    --v2p-color-orange-50: #fff7ed;
+    --v2p-color-orange-100: #ffedd5;
+    --v2p-color-orange-400: #fb923c;
+    --v2p-color-background: #f2f3f5;
+    --v2p-color-foreground: var(--v2p-color-main-700);
+    --v2p-color-selection-foreground: var(--v2p-color-main-100);
+    --v2p-color-selection-background: var(--v2p-color-main-700);
+    --v2p-color-selection-background-img: var(--v2p-color-main-500);
+    --v2p-color-font-secondary: var(--v2p-color-main-600);
+    --v2p-color-font-tertiary: var(--v2p-color-main-500);
+    --v2p-color-font-quaternary: var(--v2p-color-main-400);
+    --v2p-color-button-background: var(--v2p-color-main-100);
+    --v2p-color-button-foreground: var(--v2p-color-main-500);
+    --v2p-color-button-background-hover: var(--v2p-color-main-200);
+    --v2p-color-button-foreground-hover: var(--v2p-color-main-600);
+    --v2p-color-bg-content: #fff;
+    --v2p-color-bg-content-rgb: 255, 255, 255;
+    --v2p-color-bg-footer: var(--v2p-color-bg-content);
+    --v2p-color-bg-hover-btn: rgb(226 232 240 / 70%);
+    --v2p-color-bg-subtle: #f7f7f7;
+    --v2p-color-bg-input: var(--v2p-color-main-50);
+    --v2p-color-bg-search: var(--v2p-color-main-50);
+    --v2p-color-bg-search-active: var(--v2p-color-main-200);
+    --v2p-color-bg-widget: rgb(255 255 255 / 70%);
+    --v2p-color-bg-reply: var(--v2p-color-main-50);
+    --v2p-color-bg-tooltip: var(--v2p-color-bg-content);
+    --v2p-color-bg-tabs: var(--v2p-color-main-100);
+    --v2p-color-bg-tpr: var(--v2p-color-main-100);
+    --v2p-color-bg-avatar: var(--v2p-color-main-300);
+    --v2p-color-bg-block: var(--v2p-color-main-100);
+    --v2p-color-bg-block-darker: var(--v2p-color-main-300);
+    --v2p-color-bg-link: var(--v2p-color-main-100);
+    --v2p-color-bg-link-hover: var(--v2p-color-main-200);
+    --v2p-color-tabs: var(--v2p-color-foreground);
+    --v2p-color-heart: #ef4444;
+    --v2p-color-heart-fill: #fee2e2;
+    --v2p-color-mask: rgb(0 0 0 / 25%);
+    --v2p-color-divider: var(--v2p-color-main-200);
+    --v2p-color-border: var(--v2p-color-main-200);
+    --v2p-color-input-border: var(--v2p-color-main-300);
+    --v2p-color-border-darker: var(--v2p-color-main-300);
+    --v2p-color-link-visited: var(--v2p-color-main-400);
+    --v2p-color-error: #ef4444;
+    --v2p-color-bg-error: #fee2e2;
+    --v2p-color-cell-num: var(--v2p-color-main-350);
+    --v2p-box-shadow: 0 3px 5px 0 rgb(0 0 0 / 4%);
+    --v2p-widget-shadow: 0 9px 24px -3px rgb(0 0 0 / 6%),
+        0 4px 8px -1px rgb(0 0 0 /12%);
+    --v2p-toast-shadow: 0 6px 16px 0 rgb(0 0 0 / 8%),
+        0 3px 6px -4px rgb(0 0 0 / 12%), 0 9px 28px 8px rgb(0 0 0 / 5%);
+    --color-fade: var(--v2p-color-font-secondary);
+    --color-gray: var(--v2p-color-font-secondary);
+    --link-color: var(--v2p-color-foreground);
+    --link-darker-color: var(--v2p-color-main-600);
+    --link-visited-color:var(--v2p-color-foreground);
+    --link-hover-color: var(--v2p-color-foreground);
+    --link-caution-color: var(--v2p-color-orange-400);
+    --box-border-color: var(--v2p-color-border);
+    --box-foreground-color: var(--v2p-color-foreground);
+    --box-background-color: var(--v2p-color-bg-content);
+    --box-background-alt-color: var(--v2p-color-main-100);
+    --box-background-hover-color: var(--v2p-color-main-200);
+    --box-border-focus-color: var(--v2p-color-main-200);
+    --box-border-radius: var(--v2p-box-radius);
+    --button-background-color: var(--v2p-color-button-background);
+    --button-foreground-color: var(--v2p-color-button-foreground);
+    --button-hover-color: var(--v2p-color-button-background-hover);
+    --button-background-hover-color: var(--v2p-color-button-background-hover);
+    --button-foreground-hover-color: var(--v2p-color-button-foreground-hover);
+    --button-border-color: var(--v2p-color-main-300);
+    --button-border-hover-color: var(--v2p-color-main-400);
+}
+:root body #Logo {
+    background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+") !important;
+    width:130px !important;
+    background-size: 130px 30px !important;
+}
+:root body::selection {
+    color: var(--v2p-color-selection-foreground);
+    background-color: var(--v2p-color-selection-background);
+}
+:root body img::selection {
+    background-color: var(--v2p-color-selection-background-img);
+}
+:root {
+    color-scheme: light;
+}
+:root html,
+:root body {
+    min-height: 100vh;
+}
+body {
+    scrollbar-gutter: stable;
+    overflow: overlay;
+    /* visibility: hidden; */ /* 由即时执行块控制 */
+}
+body.v2p-theme-light-default,
+body.v2p-theme-dark-default,
+body.v2p-theme-dawn,
+body.v2p-theme-aqua {
+    /* visibility: visible; */ /* 统一由脚本控制 */
+}
+body h1 {
+    font-weight: bold;
+}
+body a {
+    cursor: default;
+    text-decoration: none;
+}
+body a[href] {
+    cursor: pointer;
+}
+body a:hover {
+    text-decoration: underline 1px;
+    text-underline-offset: var(--v2p-underline-offset);
+}
+body pre {
+    max-width: calc(830px - 2 * var(--v2p-layout-column-gap) - 24px);
+}
+body #Top {
+    height: var(--v2p-nav-height);
+    background-color: var(--v2p-color-bg-content);
+    border: none;
+}
+body #Bottom {
+    color: var(--v2p-color-font-secondary);
+    background-color: var(--v2p-color-bg-footer);
+    border: none;
+}
+body #Bottom .content {
+    flex-direction: column;
+}
+body #Wrapper {
+    background-color: inherit;
+    background-image: none;
+}
+body #Wrapper.Night {
+    background-color: inherit;
+    background-image: none;
+}
+body #Wrapper .content {
+
+    gap: var(--v2p-layout-column-gap);
+}
+/* Logo样式 */
+:root body #Logo,
+#LogoMobile {
+background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+") !important;
+width: 130px !important;
+background-size: 130px 30px !important;
+}
+
+#LogoMobile {
+background-image: url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idjJleF9sb2dvIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMSIgdmlld0JveD0iMCAwIDQxNSAxMTciPgogIDwhLS0gR2VuZXJhdG9yOiBBZG9iZSBJbGx1c3RyYXRvciAyOS4xLjAsIFNWRyBFeHBvcnQgUGx1Zy1JbiAuIFNWRyBWZXJzaW9uOiAyLjEuMCBCdWlsZCAxNDIpICAtLT4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLnN0MCB7CiAgICAgICAgaXNvbGF0aW9uOiBpc29sYXRlOwogICAgICB9CgogICAgICAuc3QxIHsKICAgICAgICBmaWxsOiAjM2UzYTM5OwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8ZyBjbGFzcz0ic3QwIj4KICAgIDxnIGNsYXNzPSJzdDAiPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMTc1LjIsMjkuOWMyLjItOC4xLDUuNS0xMS40LDExLjctMTEuNHMxMS4yLDQsMTEuMiwxMC4xLS43LDUuNy0xLjcsOWwtMTQuNiw0NS42Yy0zLjcsMTEuNi05LjYsMTYuNS0xOS45LDE2LjVzLTE2LjUtNC45LTIwLjEtMTYuNWwtMTQuNi00NS42Yy0xLjEtMy41LTEuOC02LjYtMS44LTguOCwwLTYuMSw0LjctMTAuMywxMS4zLTEwLjNzOS44LDMuNiwxMiwxMS40bDEyLjksNDUuMmgxLjFsMTIuNC00NS4yaC4xWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjE1LjQsNzUuOGwxOC42LTE4YzYuMi01LjksOC44LTkuOCw4LjgtMTMuOHMtMy41LTcuOS04LjUtNy45LTYuNywxLjctOS43LDUuOWMtMy4zLDQuMy01LjcsNS45LTkuNiw1LjlzLTkuMS0zLjYtOS4xLTguNmMwLTExLjIsMTMuNC0yMS40LDI5LjYtMjEuNHMyOS4yLDEwLjEsMjkuMiwyMy44LTQuNCwxNi41LTEzLjgsMjUuMWwtMTQuNiwxMy42di45aDIxYzYuNCwwLDEwLjQsMy41LDEwLjQsOS4xcy0zLjksOC45LTEwLjQsOC45aC00MC43Yy02LjIsMC0xMC40LTMuOC0xMC40LTkuM3MyLjMtNy43LDkuMi0xNC4yWiIvPgogICAgICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNMjc3LDMxLjJjMC03LjYsNC41LTEyLjEsMTItMTIuMWgzNy4yYzUsMCw4LjYsMy44LDguNiw5cy0zLjYsOC45LTguNiw4LjloLTI2LjN2MTMuOWgyNS4yYzQuNiwwLDcuNywzLjMsNy43LDguMnMtMy4xLDguMS03LjcsOC4xaC0yNS4ydjEzLjloMjZjNS4zLDAsOC45LDMuNiw4LjksOXMtMy42LDktOSw5aC0zNi44Yy03LjUsMC0xMi00LjUtMTItMTIuMVYzMS4zaDBaIi8+CiAgICAgIDxwYXRoIGNsYXNzPSJzdDEiIGQ9Ik0zNDMuMiw4MS45bDE3LjgtMjMuMS0xOC4xLTIyLjZjLTItMi40LTMtNC45LTMtNy40LDAtNS45LDQuNy0xMC4zLDEwLjgtMTAuM3M2LjQsMS41LDExLjUsOC40bDEzLjIsMThoMWwxMi0xOGM0LjMtNi40LDYuOS04LjQsMTEuNC04LjRzMTAuOCw0LjUsMTAuOCwxMC4zLTEsNC45LTMsNy40bC0xOC4zLDIzLDE4LjgsMjIuNmMxLjksMi4zLDMsNC45LDMsNy40LDAsNS44LTQuNywxMC4zLTEwLjgsMTAuM3MtNi0xLjMtMTEuNS04LjRsLTEzLjEtMTdoLTFsLTEyLjEsMTdjLTQuOSw2LjctNy4xLDguNC0xMS41LDguNHMtMTAuNy00LjUtMTAuNy0xMC4zLDEuMS00LjksMy03LjRoLS4yWiIvPgogICAgPC9nPgogIDwvZz4KICA8cGF0aCBjbGFzcz0ic3QxIiBkPSJNNTMuOSwxOS4ySDMuM2MtMS45LDAtMy4zLDEuNS0zLjMsMy40djIzLjFoNDcuNGMxLDAsMS45LjQsMi42LDEuMWwxMSwxMS41Yy4yLjMuMi43LDAsLjlsLTExLDExLjZjLS43LjctMS40LDEuMy0yLjQsMS4zSDB2MjMuMWMwLDEuOCwxLjUsMy4zLDMuMywzLjNoNTAuNWMxLjEsMCwyLjItLjQsMy0xLjJsMzQuMS0zMy44YzIuNi0yLjYsMi42LTYuOCwwLTkuNXEtMS43LTEuOCwwLDBMNTYuOCwyMC40Yy0uOC0uOC0xLjgtMS4yLTIuOS0xLjJoMFoiLz4KPC9zdmc+");
+}
+/* 深色模式下反转 Logo 颜色 */
+html.Night #Logo {
+filter: invert(1) brightness(0.9) contrast(0.9);
+}
+
+/* 布局和间距 */
+body #Top,
+body #Bottom {
+background-color: var(--v2p-color-background) !important;
+margin-top: 15px !important;
+}
+
+#Main #SecondaryTabs {
+padding: 5px 20px;
+background-color: var(--v2p-color-bg-tabs);
+border-radius: 99px;
+box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.05);
+}
+
+.sep20 {
+height: 10px !important;
+}
+
+.message, .section {
+margin-top: 10px;
+}
+
+.box {
+padding: 10px;
+border-radius: 18px !important;
+}
+
+#reply-box {
+margin-top: 10px !important;
+margin-bottom: 10px !important;
+}
+
+#no-comments-yet {
+margin-bottom: 10px !important;
+}
+
+#reply_content {
+padding: 10px;
+}
+
+body form textarea#topic_title {
+margin: 10px 0;
+}
+
+/* 字体设置 - 全局 */
+body,
+.mll,
+.mle,
+#search,
+.new-title-input,
+#Wrapper,
+h1,
+.item_title,
+.topic_content,
+.reply_content {
+font-family:ui-rounded, 'SF Pro Rounded', ui-system, -apple-system, sans-serif !important;
+}
+
+.topic_content a,
+.reply_content a {
+text-decoration: underline !important;
+}
+/* 标题和内容样式 */
+.item_title a {
+font-weight: normal !important;
+}
+
+.item_title,
+.item_hot_topic_title,
+.payload {
+line-height: 1.6;
+}
+
+/* 头像圆角 */
+img.avatar,
+.avatar,
+.cell[class*="hot_t_"] img[alt] {
+border-radius: 50% !important;
+width:40px !important;
+max-height:40px !important;
+}
+/* 热门主题小头像单独设置尺寸 */
+.cell[class*="hot_t_"] img[alt] {
+width: 24px !important;
+max-height: 24px !important;
+}
+
+/* 节点和标签样式 */
+.item_node {
+border-color: var(--v2p-color-main-300);
+}
+
+#Main .tab_current {
+background: none;
+border-bottom: 2px solid var(--box-foreground-color);
+border-radius: 0;
+color: var(--box-content-color);
+}
+
+#Main #SecondaryTabs {
+border-radius: 0 0 10px 10px;
+}
+
+/* 内容宽度限制 */
+.content {
+max-width: 1200px !important;
+}
+#Top>.content {
+max-width: 1110px !important;
+}
+
+/* 隐藏将被替换的旧图标，防止闪烁 */
+img[src*="compose.png"],
+img[src*="reply_neue.png"],
+img[src*="unheart.png"],
+img[src*="heart.png"] {
+    display: none !important;
+}
+
+/* 成员活动条 */
+.member-activity-bar {
+width: auto;
+}
+
+.ml {
+font-family: ui-monospace, 'SF Mono' !important;
+}
+.mll {
+border-radius: 10px;
+}
+
+body #search-container {
+border-radius:18px !important;
+}
+#Navcol .nav_item:hover {
+    background-color: var(--box-background-hover-color);
+}
+#Navcol .nav_item:hover:active {
+    box-shadow: none;
+}
+#Navcol .nav_item_current:hover {
+    color: var(--box-foreground-color);
+    background-color: var(--v2p-color-bg-content);
+}
+#Navcol .nav_item_current:active {
+    box-shadow: none;
+}
+#Rightcol #page-outline-title {
+    background-color: var(--v2p-color-button-background-hover);
+}
+#Rightcol .page-outline-item:hover {
+    background-color: var(--box-background-hover-color);
+}
+body #Wrapper:has(#Singleton) {
+    padding: 20px 0 0;
+}
+.subtle {
+    background-color: var(--bg-reply, var(--v2p-color-bg-reply)) !important;
+    border-radius:10px;
+    border: none !important;
+    border-left: 2px solid var(--v2p-color-border-darker) !important;
+    margin-top:10px;
+    padding:10px;
+}
+#topic-tip-box {
+    box-shadow: none !important;
+    display:none;
+}
+body #Wrapper:has(#Singleton) #Singleton {
+    overflow: hidden;
+    box-shadow: var(--v2p-box-shadow);
+}
+body #Leftbar {
+    float: none;
+    order: 1;
+}
+body #Main {
+    flex: 1;
+    order: 2;
+    max-width: 85vw;
+    margin-right: 290px;
+}
+body #Rightbar {
+    order: 3;
+    margin-right:0 !important;
+    margin-left:20px;
+}
+body #search-container {
+    height: 30px;
+    margin: 0 30px;
+    background-color: var(--v2p-color-bg-search);
+    border: none;
+    border-radius: 6px;
+    transition: background-color 0.2s ease; /* 新增这行：让颜色变化更柔和 */
+}
+body #search-container::before {
+    top: 0;
+    left: 4px;
+    opacity: 0.6;
+    background-size: 14px 14px;
+    filter: none;
+}
+body #search-container.active {
+    background-color: var(--v2p-color-bg-search-active);
+}
+body #search-container #search-result {
+    z-index: var(--zidx-serach);
+    top: 42px;
+    font-size: 14px;
+    color: var(--v2p-color-font-secondary);
+    background: var(--v2p-color-bg-widget);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--box-border-color);
+    box-shadow: var(--v2p-widget-shadow);
+}
+body #search-container #search-result .fade {
+    color: var(--v2p-color-font-secondary);
+}
+body #search-container #search-result .search-item {
+    font-weight: bold;
+    color: var(--v2p-color-foreground);
+    border-radius: 5px;
+}
+body #search-container #search-result .search-item.active {
+    color: var(--v2p-color-foreground);
+}
+body #search-container #search-result .search-item.active.v2p-no-active {
+    background-color: rgba(0, 0, 0, 0);
+}
+body .box {
+    color: var(--box-foreground-color);
+    background-color: var(--v2p-color-bg-content);
+    border: none;
+    border-radius: var(--box-border-radius);
+    box-shadow: var(--v2p-box-shadow);
+}
+body .box .header > h1 {
+    font-size: 18px;
+    font-weight: bold;
+}
+body .box .header .gray {
+    color: var(--color-gray);
+}
+body .button {
+    --button-hover-shadow: 0 1.8px 0 var(--button-border-color),
+        0 1.8px 0 var(--button-background-color);
+}
+body .button.normal,
+body .button.super {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding: 0 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 28px;
+    color: var(--v2p-color-button-foreground);
+    text-shadow: none;
+    white-space: nowrap;
+    background: var(--v2p-color-button-background);
+    border: none;
+    border-radius: 6px;
+    outline: none;
+    box-shadow:
+        0 1.8px 0 var(--box-background-hover-color),
+        0 1.8px 0 var(--button-background-color);
+    transition:
+        color 0.25s,
+        background-color 0.25s,
+        box-shadow 0.25s;
+    vertical-align: middle;
+    margin-right: 10px;
+}
+body .button.normal:is(:hover:enabled, :active:enabled),
+body .button.super:is(:hover:enabled, :active:enabled) {
+    font-weight: 500;
+    color: var(--v2p-color-button-foreground-hover);
+    text-shadow: none;
+    background: var(--v2p-color-button-background-hover);
+    border: none;
+    box-shadow: var(--button-hover-shadow);
+}
+body .button.normal:is(.hover_now, .disable_now),
+body .button.super:is(.hover_now, .disable_now) {
+    color: var(--v2p-color-button-foreground) !important;
+    text-shadow: none !important;
+    background: var(--button-background-color) !important;
+    border: none !important;
+    box-shadow:
+        0 1.8px 0 var(--box-background-hover-color) !important,
+        0 1.8px 0 var(--button-background-color) !important;
+}
+/* 标准提交按钮：使用主题强调色 */
+body .button.normal.button {
+    background: var(--v2p-color-accent-500);
+    color: #fff;
+    height: 32px;
+    padding: 0 14px;
+    box-shadow: 0 1.8px 0 rgba(0, 0, 0, 0.08);
+}
+body .button.normal.button:is(:hover:enabled, :active:enabled) {
+    background: var(--v2p-color-accent-600);
+    color: #fff;
+}
+body .button.normal:is(.disable_now, :disabled),
+body .button.super:is(.disable_now, :disabled) {
+    pointer-events: none;
+    cursor: default;
+    font-weight: 500;
+    color: var(--v2p-color-button-foreground);
+    text-shadow: none;
+    opacity: 0.8;
+    background: var(--button-background-color);
+    box-shadow:
+        0 1.8px 0 var(--box-background-hover-color),
+        0 1.8px 0 var(--button-background-color);
+}
+body .button.normal kbd,
+body .button.super kbd {
+    position: relative;
+    right: -4px;
+    padding: 0 3px;
+    font-family: inherit;
+    font-size: 90%;
+    line-height: initial;
+    border: 1px solid var(--button-border-color);
+    border-radius: 4px;
+}
+.button.normal {
+    border-radius:90px !important;
+    padding-left:20px !important;
+    padding-right:20px !important;
+}
+.ps_container td.button {
+    border-top-right-radius: 0px !important;
+    border-bottom-right-radius: 0px !important;
+}
+.ps_container td.normal_page_right {
+    border-top-right-radius: 90px !important;
+    border-bottom-right-radius: 90px !important;
+}
+
+
+
+body .button.special {
+    --button-hover-shadow: 0 1.8px 0 var(--v2p-color-accent-200),
+        0 1.8px 0 var(--v2p-color-accent-100);
+    color: var(--v2p-color-accent-500);
+    border-radius:99px;
+    max-width:120px;
+}
+body .button.special:hover,
+body .button.special:hover:enabled {
+    color: var(--v2p-color-accent-600);
+    background: var(--v2p-color-accent-100);
+    border: none;
+    box-shadow: var(--button-hover-shadow);
+}
+body .button a {
+    color: inherit;
+    text-decoration: none;
+}
+body .badge {
+    user-select: none;
+    padding: 1px 3px;
+    font-weight: bold;
+    border: 1px solid var(--v2p-color-accent-400);
+    border-radius:99px !important;
+    line-height:13px;
+    margin-right:5px;
+}
+body .badge:first-child {
+    border: 1px solid var(--v2p-color-accent-400);
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+}
+body .badge:last-child {
+    border: 1px solid var(--v2p-color-accent-400);
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+body .badge.op {
+    color: var(--v2p-color-accent-400);
+    background-color: var(--v2p-color-accent-50);
+}
+body .badge.mod {
+    color: var(--v2p-color-bg-content);
+    background-color: var(--v2p-color-accent-400);
+}
+body .badge.you {
+    color: var(--v2p-color-orange-400);
+    background-color: var(--v2p-color-orange-50);
+    border: 1px solid var(--v2p-color-orange-400);
+}
+body .badge.mini {
+    height: 1.2em;
+    font-size: 12px;
+    font-weight: normal;
+    line-height: 1;
+}
+body a.node:is(:active, :link, :visited) {
+    padding: 2px 6px;
+    font-size: 9px;
+    color: var(--v2p-color-font-secondary);
+    background-color: var(--v2p-color-bg-block);
+    border-radius: 99px;
+}
+body a.node:is(:active, :link, :visited):hover {
+    color: var(--v2p-color-font-tertiary);
+    background-color: var(--v2p-color-button-background-hover);
+}
+body .outdated {
+    font-size: 12px;
+    border-color: var(--v2p-color-border);
+    border-bottom: none;
+}
+body :is(.page_normal, .page_current):is(:link, :visited) {
+    user-select: none;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 25px;
+    height: 25px;
+    padding: 0 !important;
+    font-size: 13px;
+    line-height: 1;
+    border: none;
+    border-radius: 50% !important;
+    margin: 0 2px;
+    text-decoration: none !important;
+}
+body .page_normal:is(:link, :visited) {
+    font-weight: 500;
+    color: var(--v2p-color-font-primary);
+    background-color: var(--v2p-color-bg-content);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+body .page_normal:is(:link, :visited):hover {
+    background-color: var(--v2p-color-button-background-hover);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+body .page_current:is(:link, :visited) {
+    pointer-events: none;
+    font-weight: bold;
+    color: #fff !important;
+    background-color: var(--v2p-color-accent-500, #333) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+/* Previous/Next buttons customized */
+/* 仅针对 .normal_page_right (通常是分页的小箭头按钮)，去掉 generic .normal 以免误伤“现在注册”等普通按钮 */
+body .super.button.normal_page_right:not(button) {
+    display: inline-block !important; /* Fix table-cell layout issue */
+    vertical-align: middle;
+    text-align: center;
+    width: 25px;
+    height: 25px;
+    line-height: 25px !important;
+    padding: 0 !important;
+    font-size: 12px;
+    border: none !important;
+    border-radius: 50% !important;
+    margin: 0 2px;
+    background-color: var(--v2p-color-bg-content) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    cursor: pointer;
+}
+body .super.button.normal_page_right:not(button):hover,
+body .super.button.normal_page_right:not(button).hover_now {
+    background-color: var(--v2p-color-button-background-hover) !important;
+}
+body .super.button.disable_now {
+    opacity: 0.4;
+    pointer-events: none;
+    box-shadow: none;
+}
+body .page_input {
+    display: none;
+}
+body .dock_area {
+    margin: 12px 0;
+    background: var(--v2p-color-bg-block);
+    border-radius:10px;
+}
+body .member-activity-bar {
+    background-color: var(--v2p-color-divider);
+}
+body .member-activity-bar {
+    width:auto !important;
+}
+body .member-activity-bar .member-activity-start {
+    background-color: var(--v2p-color-accent-200);
+}
+body .member-activity-bar .member-activity-fourth {
+    background-color: var(--v2p-color-accent-400);
+}
+body .member-activity-bar .member-activity-half {
+    background-color: var(--v2p-color-accent-500);
+}
+body .member-activity-bar .member-activity-almost {
+    background-color: var(--v2p-color-accent-600);
+}
+body .member-activity-bar .member-activity-done {
+    background-color: var(--v2p-color-orange-400);
+}
+body .online {
+    user-select: none;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: var(--v2p-color-bg-content);
+    background: var(--v2p-color-accent-400);
+    border-radius: 5px;
+}
+body #topic_supplement {
+    resize: none;
+    overflow: hidden;
+    height: unset;
+    min-height: 550px !important;
+    max-height: 800px !important;
+    font-size: 15px;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+    transition: opacity 0.25s;
+    overflow-y: auto;
+}
+body #topic_supplement::placeholder {
+    font-size: 15px;
+    color: var(--v2p-color-font-tertiary);
+}
+body #topic_supplement:is(:focus, :focus-within) {
+    background-color: rgba(0, 0, 0, 0);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--button-border-color);
+}
+body .item_hot_topic_title {
+    --offset: 2.4px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.4;
+    position: relative;
+    padding: var(--offset) 0;
+    text-shadow: none;
+}
+body .item_hot_topic_title > a:hover {
+    text-underline-offset: var(--offset);
+}
+body form textarea#topic_title {
+    resize: none;
+    overflow: hidden;
+    height: unset;
+    min-height: 75px !important;
+    max-height: 800px !important;
+    font-size: 15px;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+    transition: opacity 0.25s;
+}
+body form textarea#topic_title::placeholder {
+    font-size: 15px;
+    color: var(--v2p-color-font-tertiary);
+}
+body form textarea#topic_title:is(:focus, :focus-within) {
+    background-color: rgba(0, 0, 0, 0);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--button-border-color);
+}
+body form #topic_title {
+    resize: none;
+    overflow: hidden;
+    height: unset;
+    min-height: 30px !important;
+    max-height: 800px !important;
+    font-size: 15px;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+    transition: opacity 0.25s;
+}
+body form #topic_title::placeholder {
+    font-size: 15px;
+    color: var(--v2p-color-font-tertiary);
+}
+body form #topic_title:is(:focus, :focus-within) {
+    background-color: rgba(0, 0, 0, 0);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--button-border-color);
+}
+body form #topic_content {
+    resize: none;
+    overflow: hidden;
+    height: unset;
+    min-height: 120px !important;
+    max-height: 800px !important;
+    font-size: 15px;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+    transition: opacity 0.25s;
+}
+body form #topic_content::placeholder {
+    font-size: 15px;
+    color: var(--v2p-color-font-tertiary);
+}
+body form #topic_content:is(:focus, :focus-within) {
+    background-color: rgba(0, 0, 0, 0);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--button-border-color);
+}
+body form[action^="/notes"] .cell {
+    background-color: rgba(0, 0, 0, 0) !important;
+}
+body #syntax-selector .radio-group {
+    padding: 3px;
+    border-radius:18px;
+    background-color: var(--v2p-color-background);
+}
+body #syntax-selector .radio-group > input[type="radio"]:checked + label {
+    background-color: #fff;
+    border-radius:18px;
+}
+body #syntax-selector .radio-group > input[type="radio"] + label {
+    cursor: pointer;
+    font-size: 13px;
+}
+body #syntax-selector label {
+    color: var(--v2p-color-foreground);
+}
+body .snow {
+    color: var(--v2p-color-font-quaternary);
+}
+body .orange-dot {
+    background: var(--v2p-color-orange-400);
+}
+body .alt {
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+}
+body a.btn_hero {
+    border-color: var(--v2p-color-foreground);
+}
+body a.btn_hero:hover {
+    background-color: var(--v2p-color-foreground);
+}
+a.op {
+    border-radius:20px !important;
+    padding:2px 6px !important;
+    font-size:12px;
+}
+a.tab_current, a.tab {
+    border-radius:20px !important;
+    }
+a.tab:active, a.tab:link, a.tab:visited {
+    color:var(--v2p-color-foreground);
+}
+#topic_thank {
+    line-height:1;
+    }
+/* 主题页操作按钮图标化（收藏/分享/忽略/感谢） */
+#Main .header .fr {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+#Main .header .fr a.op.v2p-op-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    line-height: 1 !important;
+    font-size: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+#Main .header .fr a.op.v2p-op-icon svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+body .cell_ops {
+    background-color: rgba(0, 0, 0, 0);
+}
+a.dark:active, a.dark:link, a.dark:visited {
+    color: inherit !important;;
+    text-decoration: none;
+}
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="v2ex.com/t"],
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="v2ex.com/t"][href^="http"],
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="/"] {
+    text-decoration: underline 1.5px;
+    text-underline-offset: 0.46ex;
+    color: var(--v2p-color-accent-500);
+    background-color: var(--v2p-color-accent-50);
+}
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="v2ex.com/t"]:hover,
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="v2ex.com/t"][href^="http"]:hover,
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="/"]:hover {
+    color: var(--v2p-color-accent-500);
+    background-color: var(--v2p-color-accent-50);
+}
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="http"],
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="/email-protection"],
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="/member/"] {
+    text-decoration: underline 1.5px;
+    text-underline-offset: 0.46ex;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-link);
+}
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="http"]:hover,
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="/email-protection"]:hover,
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="/member/"]:hover {
+    color: currentColor;
+    background-color: var(--v2p-color-bg-link-hover);
+}
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="http"]:has(> .embedded_image),
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href*="/email-protection"]:has(> .embedded_image),
+body:is(
+        .topic_content,
+        .reply_content,
+        .v2p-topic-preview-content,
+        .v2p-topic-preview-addons,
+        .v2p-reply-preview,
+        .markdown_body
+    )
+    a[href^="/member/"]:has(> .embedded_image) {
+    background-color: rgba(0, 0, 0, 0);
+}
+body .CodeMirror {
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+}
+body .CodeMirror.CodeMirror-focused {
+    background-color: var(--v2p-color-bg-content);
+}
+body .CodeMirror .CodeMirror-gutters {
+    padding-right: 5px;
+    background-color: var(--v2p-color-bg-input);
+    border-right: 1px solid var(--v2p-color-border-darker);
+}
+body .CodeMirror .CodeMirror-linenumber {
+    color: var(--v2p-color-font-quaternary);
+}
+body .CodeMirror .CodeMirror-cursors {
+    background-color: var(--v2p-color-foreground);
+}
+body .cm-s-one-dark {
+    background-color: var(--v2p-color-bg-input);
+}
+body #workspace {
+    overflow: hidden;
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+}
+body .select2-container {
+    width: 200px !important;
+}
+body .select2-container .select2-selection {
+    background-color: var(--v2p-color-background);
+    border: 1px solid var(--v2p-color-border);
+}
+body .select2-container .select2-selection .select2-selection__rendered,
+body .select2-container .select2-selection .select2-selection__placeholder {
+    color: var(--v2p-color-foreground);
+}
+body .select2-container .select2-dropdown {
+    font-size: 14px;
+    background: var(--v2p-color-bg-widget);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--box-border-color);
+    border-radius: 8px;
+    box-shadow: var(--v2p-widget-shadow);
+    transform: translateY(5px);
+}
+body .select2-container .select2-dropdown .select2-search {
+    padding: 5px;
+}
+body .select2-container
+    .select2-dropdown
+    .select2-search
+    .select2-search__field {
+    padding: 6px 4px;
+    background-color: rgba(0, 0, 0, 0);
+    border: 1px solid var(--v2p-color-border);
+    border-radius: 4px;
+}
+body .select2-container
+    .select2-dropdown
+    .select2-search
+    .select2-search__field:focus-visible {
+    border-color: var(--v2p-color-font-quaternary);
+    outline: none;
+}
+body
+    .select2-container
+    .select2-dropdown
+    .select2-results
+    > .select2-results__options {
+    padding: 5px;
+}
+body .select2-container
+    .select2-dropdown
+    .select2-container--default
+    .select2-results__option--selected {
+    color: currentColor;
+    background-color: var(--v2p-color-accent-100);
+}
+body .select2-container .select2-results__option {
+    border-radius: 4px;
+}
+body
+    .select2-container
+    .select2-results__option--highlighted.select2-results__option--selectable {
+    color: currentColor;
+    background-color: var(--v2p-color-main-200);
+}
+body .select2-container .select2-results__option--selected {
+    color: currentColor !important;
+    background-color: var(--v2p-color-accent-100) !important;
+}
+body .problem {
+    color: currentColor;
+    color: var(--v2p-color-orange-400);
+    background-color: var(--v2p-color-orange-50);
+    border-color: var(--v2p-color-orange-400);
+    border-bottom: none;
+}
+body .markdown_body table {
+    border-top: 1px solid var(--v2p-color-border-darker);
+    box-shadow: none;
+}
+body .markdown_body table tr th,
+body .markdown_body table tr td {
+    border: 1px solid var(--v2p-color-border-darker);
+}
+body .markdown_body table tr:nth-child(2n) {
+    background-color: var(--box-background-alt-color);
+}
+body .markdown_body blockquote {
+    margin-inline: 0;
+    padding: 0 1em;
+    color: var(--v2p-color-font-tertiary);
+    border-left: 3px solid var(--v2p-color-border);
+}
+body .markdown_body pre {
+    line-height: 1.5;
+}
+body .social_label:is(:link, :visited, :active) {
+    background-color: var(--v2p-color-button-background);
+    border-radius: var(--box-border-radius);
+    box-shadow: none;
+}
+body .social_label:is(:link, :visited, :active):hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+body .green {
+    color: var(--v2p-color-accent-500);
+}
+body .message {
+    margin: 6px 10px 8px;   /* 上右下左：这里重点是 margin-bottom: 8px; */
+    color: var(--v2p-color-orange-400);
+    background-color: var(--v2p-color-orange-50);
+    border: none;
+    border-radius: 999px;
+}
+
+body .balance_area,
+body a.balance_area:is(:link, :visited) {
+    display: inline-flex;
+    gap: 3px;
+    align-items: center;
+    font-weight: 600;
+    color: var(--v2p-color-foreground);
+    text-shadow: none;
+    background: var(--v2p-color-button-background);
+}
+body .balance_area:hover,
+body a.balance_area:is(:link, :visited):hover {
+    background: var(--v2p-color-button-background-hover);
+}
+body:is(.subtle) {
+    background-color: var(--v2p-color-bg-subtle);
+    border-left: 3px solid var(--v2p-color-accent-200);
+}
+body:is(.subtle) .topic_content {
+    font-size: 15px;
+}
+body .onoffswitch label .frame::before {
+    color: #fff;
+    background-color: var(--v2p-color-accent-400);
+}
+body .onoffswitch label .frame::after {
+    color: var(--v2p-color-font-secondary);
+    background-color: var(--v2p-color-bg-search);
+}
+body select {
+    color: var(--v2p-color-foreground);
+    background-color: var(--v2p-color-background);
+    border: 1px solid var(--v2p-color-border);
+    border-radius: 4px;
+    padding: 4px 6px;
+}
+body .ml,
+body .mle,
+body .mll,
+body .sl,
+body .sll,
+body .sls {
+    color: var(--v2p-color-foreground);
+    background-color: var(--v2p-color-bg-content);
+    border-color: var(--v2p-color-input-border);
+}
+body .ml:focus,
+body .mle:focus,
+body .mll:focus,
+body .sl:focus,
+body .sll:focus,
+body .sls:focus {
+    border-color: var(--v2p-color-input-border);
+}
+body input,
+body select,
+body textarea {
+    color: var(--v2p-color-foreground);
+}
+body .onoffswitch {
+    width: 90px;
+    min-width: 90px;
+    max-width: 90px;
+}
+.box .tag::before {
+    color: var(--v2p-color-font-secondary);
+}
+.box .tag:link,
+.box .tag:visited {
+    font-size: 12px;
+    color: var(--v2p-color-font-secondary);
+    background-color: var(--v2p-color-main-100);
+    border-radius: 99px;
+}
+.box .tag > li {
+    opacity: 0.6;
+}
+.payload {
+    border-radius:10px;
+}
+#Top .content {
+    height: 100%;
+}
+#Top .site-nav {
+    height: 100%;
+    padding: 0;
+}
+#Top .tools {
+    display: flex;
+    gap: 8px 14px;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 14px;
+    font-weight: 400;
+}
+html.v2p-topnav-pending #Top .tools {
+    visibility: hidden;
+}
+#Top .tools .top {
+    height: 26px;
+    padding: 0 6px;
+    line-height: 26px;
+    color: var(--v2p-color-button-foreground);
+    white-space: nowrap;
+    border-radius: 4px;
+}
+#Top .tools .top:hover {
+    color: var(--v2p-color-foreground);
+}
+#Top .tools .top:not(.v2p-hover-btn):hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+#Top .tools * {
+    margin-left: 0;
+}
+#Main .box {
+    overflow: auto;
+    padding: 5px 12px;
+}
+#Main .box.node-header > .cell {
+    margin: 0 -12px;
+}
+#Main .node-header {
+    padding-top:0 !important;
+}
+#Main .box .cell {
+    padding: var(--v2p-tp-item-x) var(--v2p-tp-item-y);
+    background-image: none !important;
+}
+#Main .box .cell_ops {
+    padding: 15px 5px;
+}
+#Main .box:has(form[action="/write"]) .cell:nth-child(1),
+#Main .box:has(form[action="/write"]) .cell:nth-child(2) {
+    border: none;
+}
+#Main .box:has(form[action="/write"]) .cell:has(#syntax-selector) {
+    padding: 8px 0 !important;
+}
+#Main
+    .box:has(form[action="/write"])
+    .cell:has(#syntax-selector)
+    .tab-alt-container {
+    gap: 0 8px;
+}
+#Main .box:has(form[action="/write"]) .cell:has(#syntax-selector) .tab-alt {
+    padding: 4px 2px;
+    border-bottom-width: 2px;
+    transition: none;
+}
+#Main
+    .box:has(form[action="/write"])
+    .cell:has(#syntax-selector)
+    .tab-alt:not(.active):hover {
+    border-color: rgba(0, 0, 0, 0);
+}
+#Main .box:has(form[action="/write"]) .cell#preview {
+    padding: 2px 5px;
+}
+#Main .topic_buttons {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 5px;
+    align-items: center;
+    padding: 8px 0;
+    background: none;
+}
+#Main .topic_buttons .topic_stats {
+    float: none;
+    flex: 1;
+    order: 99;
+    margin-left: 10px;
+    padding: 0 !important;
+    font-size: 12px;
+    text-shadow: none;
+    white-space: nowrap;
+}
+#Main .topic_buttons .topic_thanked {
+    font-size: 12px;
+}
+#Main .topic_buttons a.tb:link {
+    display: flex;
+    flex-direction: row-reverse;
+    column-gap: 5px;
+    align-items: center;
+    padding: 5px;
+    text-shadow: none;
+    white-space: nowrap;
+    background: none;
+    border-radius: 4px;
+}
+#Main .topic_buttons a.tb:link:not(.v2p-hover-btn) {
+    color: var(--v2p-color-font-secondary);
+}
+#Main .topic_buttons a.tb:link:hover:not(.v2p-hover-btn) {
+    color: currentColor;
+    background: var(--v2p-color-bg-block);
+}
+#Main .vote:link {
+    color: var(--v2p-color-font-tertiary);
+    border-color: var(--v2p-color-border-darker);
+    border-radius: 5px;
+}
+#Main .vote:link:hover {
+    box-shadow: 0 2px 2px var(--v2p-color-main-200);
+}
+#Main .cell .topic-link {
+    color: var(--v2p-color-main-600);
+    text-decoration: none;
+}
+#Main .cell .topic-link:visited {
+    color: var(--v2p-color-main-600);
+}
+#Main .cell .topic_info {
+    pointer-events: none;
+    user-select: none;
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+#Main .cell .topic_info::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    inset: 0 0 -6px;
+    background-color: var(--v2p-color-bg-content);
+}
+#Main .cell .topic_info .votes,
+#Main .cell .topic_info .node,
+#Main .cell .topic_info strong:first-of-type,
+#Main .cell .topic_info span:first-of-type,
+#Main .cell .topic_info .v2p-topic-actions {
+    pointer-events: auto;
+    position: relative;
+    z-index: 2;
+}
+#Main .cell .topic_info a[href^="/member"] {
+    font-weight: 500;
+    color: var(--v2p-color-font-tertiary);
+    background-color: rgba(0, 0, 0, 0);
+}
+#Main .cell .count_livid {
+    user-select: none;
+    display: inline-block;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-weight: 400;
+    white-space: nowrap;
+    border-radius: 99px;
+    margin-right: 0;
+    color: var(--v2p-color-button-foreground);
+    background-color: var(--v2p-color-bg-block);
+}
+#Main .cell .count_orange {
+    user-select: none;
+    display: inline-block;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-weight: 400;
+    white-space: nowrap;
+    border-radius: 99px;
+    font-weight: bold;
+    color: var(--v2p-color-bg-block);
+    background-color: var(--v2p-color-orange-400);
+}
+#Main .cell .item_title .topic-link {
+    font-size: 15px;
+    font-weight: 500;
+}
+#Main .cell.item tr > td:nth-child(2) {
+    width: 30px;
+}
+#Main .box > .cell[id^="r"]:not(:has(.cell[id^="r"])) .reply_content,
+#Main
+    .v2p-modal-content
+    > .cell[id^="r"]:not(:has(.cell[id^="r"]))
+    .reply_content {
+    padding-bottom: 0;
+}
+#Main .cell[id^="r"] {
+    --bg-reply: var(--v2p-color-bg-content);
+    background-color: var(--bg-reply);
+}
+#Main .cell[id^="r"]:not(:has(+ .cell[id^="r"])) {
+    border-bottom: none;
+}
+#Main .cell[id^="r"]:hover > table td:last-of-type .fr a {
+    opacity: 1;
+}
+#Main .cell[id^="r"] .ago {
+    font-size: 12px;
+    color: var(--v2p-color-font-quaternary);
+    white-space: nowrap;
+}
+#Main .cell[id^="r"] .reply_content {
+    padding-bottom: 10px;
+    line-height: 1.5;
+}
+#Main .cell[id^="r"] > table:first-of-type td:first-of-type {
+    width: 40px;
+}
+#Main .cell[id^="r"] > table:first-of-type td:first-of-type .avatar {
+    display: inline-block;
+    aspect-ratio: 1;
+    width: 40px !important;
+    height: 40px !important;
+    background-color: var(--v2p-color-bg-avatar);
+    margin-top:5px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] {
+    --bg-reply: var(--v2p-color-bg-reply);
+    position: relative;
+    z-index: var(--zidx-expand-btn);
+    padding: var(--v2p-tp-nested-pd);
+    border-left: 2px solid var(--v2p-color-border-darker);
+    border-top: 1px solid var(--v2p-color-border-darker);
+    border-radius: 10px;
+    margin:10px 0 0 30px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] .cell[id^="r"] {
+    padding: 0;
+    box-shadow: none;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] .cell[id^="r"].v2p-indent {
+
+    border-left: 2px solid var(--v2p-color-border-darker);
+    padding:10px 10px 2px 10px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] tr td:first-of-type {
+    width: 25px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] tr td:first-of-type .avatar {
+    width: 25px !important;
+    height: 25px !important;
+    border-radius: 4px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] tr td:nth-child(3) strong a {
+    font-size: 13px;
+}
+#Main .cell[id^="r"] > table ~ .cell[id^="r"] .reply_content {
+    padding-right: 5px;
+}
+#Main .cell[id^="r"] > table td:nth-of-type(2) {
+    width: 15px;
+}
+#Main .cell[id^="r"] > table td:last-of-type a.dark {
+    color: var(--v2p-color-font-secondary);
+    text-decoration: none;
+}
+#Main .cell[id^="r"] > table td:last-of-type a.dark:hover {
+    text-decoration: none;
+}
+#Main .cell[id^="r"] > table td:last-of-type .fr {
+    user-select: none;
+    position: relative;
+    top: -3px;
+}
+#Main .cell[id^="r"] > table td:last-of-type .fr a {
+    opacity: 0;
+}
+#Main .cell[id^="r"] > table td:last-of-type .fr + .sep3 {
+    height: 0;
+}
+#Main .cell[id^="r"]:last-of-type {
+    border: none;
+}
+#Main .cell[id^="r"] .no {
+    user-select: none;
+    position: relative;
+    top: -4px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--v2p-color-cell-num);
+    background-color: rgba(0, 0, 0, 0);
+    border-radius: 5px;
+}
+#Main #Tabs {
+    user-select: none;
+    position: sticky;
+    z-index: var(--zidx-tabs);
+    top: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    align-items: center;
+    padding: var(--v2p-tp-tabs-pd);
+    background-color: var(--v2p-color-bg-content);
+}
+html.v2p-tabs-pending #Tabs {
+    visibility: hidden;
+}
+#Main #Tabs .tab_current,
+#Tabs .tab_current {
+    background-color: var(--v2p-color-accent-500) !important;
+    color: #fff !important;
+    border: 1px solid transparent !important;
+}
+#Main #Tabs .tab,
+#Main #Tabs .tab_current,
+#Tabs .tab,
+#Tabs .tab_current {
+    margin: 3px 4px;
+    padding: 4px 8px;
+    border-radius: 20px;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    gap: 4px;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+}
+#Main #Tabs .tab svg,
+#Tabs .tab svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+}
+#Main #Tabs .tab.v2p-hover-btn::before {
+    inset: 0;
+    border: 1px solid transparent;
+    box-sizing: border-box;
+    transform: none;
+    opacity: 0;
+    display: none !important;
+}
+#Main #Tabs .tab.v2p-hover-btn:hover::before {
+    transform: none;
+    opacity: 1;
+    display: none !important;
+}
+#Main #Tabs .tab.v2p-hover-btn,
+#Tabs .tab.v2p-hover-btn {
+    overflow: hidden;
+}
+/* Tabs hover 直接用背景色，禁用伪元素动画 */
+#Main #Tabs .tab.v2p-hover-btn:hover,
+#Tabs .tab.v2p-hover-btn:hover {
+    background-color: var(--v2p-color-bg-hover-btn);
+}
+#Main #SecondaryTabs {
+    padding: 5px 20px;
+    background-color: var(--v2p-color-bg-tabs);
+    border-radius: 99px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.05);
+    margin-bottom:10px;
+}
+#Main #SecondaryTabs a {
+    color: var(--v2p-color-main-600);
+}
+#Main .topic_content,
+#Main .reply_content {
+    font-size: 15px;
+    line-height: 1.6;
+    color: currentColor;
+}
+#Main .topic_content a[href^="/member"],
+#Main .reply_content a[href^="/member"] {
+    position: relative;
+    bottom: 1px;
+    font-size: 13px;
+    color: var(--v2p-color-font-tertiary);
+    text-decoration: underline;
+    text-underline-offset: 0.4ex;
+    background-color: rgba(0, 0, 0, 0);
+}
+#Main .thank_area {
+    font-size: 12px;
+}
+#Main .tab {
+    user-select: none;
+    color: var(--v2p-color-foreground);
+    background-color: rgba(0, 0, 0, 0);
+}
+#Main .tab:not(.v2p-hover-btn):hover {
+    background-color: var(--v2p-color-bg-block);
+}
+#Main .tab_current {
+    user-select: none;
+    color: var(--v2p-color-bg-content) !important;
+    background-color: var(--v2p-color-foreground) !important;
+    border-radius: 999px !important;
+}
+#Main #reply-box.reply-box-sticky {
+    z-index: var(--zidx-reply-box);
+    bottom: 20px;
+    overflow: visible;
+    margin: 0 -10px;
+    padding: 0 22px;
+    border: none;
+    border-radius: var(--box-border-radius);
+    outline: 2px solid var(--v2p-color-border);
+}
+a.topic-link:active,a.topic-link:link {
+    line-height: 1.5;
+}
+#Main #reply-box .flex-one-row:last-of-type {
+
+    justify-content: flex-start;
+}
+#Main #reply-box .flex-one-row:last-of-type .gray {
+    margin-right: auto;
+}
+#Main #reply-box > .cell {
+    font-size: 12px;
+}
+#Main #reply-box > .cell.flex-one-row {
+    min-height: 45px;
+    padding: 0 10px;
+    border: none;
+}
+#Main #reply-box > .cell.flex-row-end {
+    padding: 12px 10px;
+    border: none;
+}
+#Main #reply-box > .cell:has(form) {
+    padding-top: 0;
+}
+#Main #no-comments-yet {
+    color: var(--color-gray);
+    border-color: var(--color-gray);
+}
+#Main #notifications .cell[id^="n"]:hover .node {
+    opacity: 1;
+}
+#Main #notifications .cell[id^="n"] .node {
+    opacity: 0;
+}
+#Main #notifications .cell[id^="n"] .payload {
+    color: var(--v2p-color-foreground);
+    background-color: var(--v2p-color-bg-block);
+}
+#Main #notifications .cell[id^="n"] .payload:has(.embedded_video_wrapper) {
+    min-width: 50%;
+}
+#Main #notifications .cell[id^="n"] .topic-link:visited {
+    color: var(--v2p-color-font-quaternary);
+}
+#Main #notifications .cell[id^="n"] > table > tbody > tr > td:first-child {
+    width: 50px !important;
+}
+
+#Main .cell_tabs .cell_tab_current {
+    font-weight: bold;
+    border-color: var(--v2p-color-foreground);
+}
+#Main .cell_tabs .cell_tab {
+    color: var(--v2p-color-foreground);
+}
+#Main .cell_tabs .cell_tab:hover {
+    border-color: var(--v2p-color-border-darker);
+}
+#Rightbar .cell:has(.light-toggle) {
+    font-size: 13px;
+}
+#Rightbar .box .item_node {
+    font-size: 12px;
+    color: var(--v2p-color-font-secondary);
+    border-color: var(--v2p-color-border);
+    border-radius: 5px;
+}
+#Rightbar .box .item_node:hover {
+    box-shadow: var(--v2p-box-shadow);
+}
+#Rightbar a.dark:is(:link, :active, :visited, :hover) {
+    color: var(--v2p-color-font-tertiary);
+}
+#Rightbar a.dark:is(:link, :active, :visited, :hover):hover {
+    color: var(--v2p-color-font-secondary);
+}
+#Bottom {
+    position: sticky;
+    top: 100%;
+}
+#Bottom a.dark {
+    font-size: 13px;
+    font-weight: 400;
+}
+#Bottom a.dark:is(:link, :active, :visited, :hover) {
+    color: var(--v2p-color-font-tertiary);
+}
+.wwads-cn {
+    border: none !important;
+    box-shadow: none !important;
+}
+.box:has(a[href^="/advertise"]) {
+    overflow: hidden;
+    border: none !important;
+    box-shadow: none !important;
+}
+.box:has(a[href^="/advertise"]) .sidebar_compliance {
+    background-color: var(--v2p-color-bg-block);
+}
+.inner table {
+table-layout: fixed;
+}
+/* --- 这里替换原文件中的深色模式 CSS --- */
+html.v2p-theme-dark-default,
+html.v2p-theme-dark-default body,
+:root body.v2p-theme-dark-default,
+:root .v2p-theme-dark-default,
+:root[data-darkreader-scheme="dark"] body,
+:root body:where(:has(#Wrapper.Night)) {
+    color-scheme: dark;
+    --v2p-color-main-50: unset;
+    --v2p-color-main-100: #2d333b;
+    --v2p-color-main-200: #374151;
+    --v2p-color-main-300: #374151;
+    --v2p-color-main-350: #6b7280cc;
+    --v2p-color-main-400: #6b7280;
+    --v2p-color-main-500: #9ca3af;
+    --v2p-color-main-600: #9ca3af;
+    --v2p-color-main-700: #d1d5db;
+    --v2p-color-main-800: #e5e7eb;
+    --v2p-color-main-900: #111827;
+    --v2p-color-main-950: #030712;
+    --v2p-color-border:#2d323c;
+    --v2p-color-accent-50: #064e3b;
+    --v2p-color-accent-100: #065f46;
+    --v2p-color-accent-200: #047857;
+    --v2p-color-accent-300: #059669;
+    --v2p-color-accent-400: #34d399;
+    --v2p-color-accent-500: #34d399;
+    --v2p-color-accent-600: #6ee7b7;
+    --v2p-color-orange-50: #593600;
+    --v2p-color-orange-100: #9a3412;
+    --v2p-color-orange-400: #fbe090;
+    --v2p-color-background: #1c2128;
+    --v2p-color-foreground: #adbac7;
+    --v2p-color-font-secondary: var(--v2p-color-main-600);
+    --v2p-color-button-background: #373e47;
+    --v2p-color-button-foreground: var(--v2p-color-foreground);
+    --v2p-color-button-background-hover: #444c56;
+    --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
+    --v2p-color-bg-content: #22272e;
+    --v2p-color-bg-content-rgb: 34, 39, 46;
+    --v2p-color-bg-hover-btn: var(--v2p-color-button-background-hover);
+    --v2p-color-bg-subtle: #444c56;
+    --v2p-color-bg-input: var(--v2p-color-background);
+    --v2p-color-bg-search: var(--v2p-color-main-100);
+    --v2p-color-bg-search-active: var(--v2p-color-main-200);
+    --v2p-color-bg-widget: var(--v2p-color-bg-content);
+    --v2p-color-bg-reply: var(--v2p-color-main-100);
+    --v2p-color-bg-tooltip: var(--v2p-color-main-100);
+    --v2p-color-bg-avatar: var(--v2p-color-main-300);
+    --v2p-color-bg-block: #373e47;
+    --v2p-color-heart: #ef4444;
+    --v2p-color-heart-fill: #fca5a5;
+    --v2p-color-mask: rgb(99 110 123 / 40%);
+    --v2p-color-border: #444c56;
+    --v2p-color-input-border: #444c56;
+    --v2p-color-border-darker: #444c56;
+    --v2p-box-shadow: 0 3px 5px 0 rgb(0 0 0 / 10%);
+    --v2p-toast-shadow: none;
+    --link-color: var(--v2p-color-foreground);
+    --link-visited-color:var(--v2p-color-foreground);
+    --box-background-alt-color: var(--v2p-color-main-100);
+    --box-background-hover-color: var(--v2p-color-main-300);
+    --box-border-color: var(--v2p-color-main-100);
+    --button-hover-color: var(--button-background-hover-color);
+    --button-border-color: var(--v2p-color-border);
+    --button-border-hover-color: #768390;
+
+    visibility: visible;
+}
+
+html.v2p-theme-dark-default #Logo,
+html.v2p-theme-dark-default body #Logo,
+:root body.v2p-theme-dark-default #Logo,
+:root .v2p-theme-dark-default #Logo,
+:root[data-darkreader-scheme="dark"] body #Logo,
+:root body:has(#Wrapper.Night) #Logo {
+    background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex-alt%402x.svg");
+}
+
+html.v2p-theme-dark-default::selection,
+html.v2p-theme-dark-default body::selection,
+:root body.v2p-theme-dark-default::selection,
+:root .v2p-theme-dark-default::selection,
+:root[data-darkreader-scheme="dark"] body::selection,
+:root body:has(#Wrapper.Night)::selection {
+    color: var(--v2p-color-background, #1c2128);
+    background-color: var(--v2p-color-foreground, #adbac7);
+}
+
+html.v2p-theme-dark-default img::selection,
+html.v2p-theme-dark-default body img::selection,
+:root body.v2p-theme-dark-default img::selection,
+:root .v2p-theme-dark-default img::selection,
+:root[data-darkreader-scheme="dark"] body img::selection,
+:root body:has(#Wrapper.Night) img::selection {
+    background-color: var(--v2p-color-foreground, #adbac7);
+}
+
+html.v2p-theme-dark-default #Top,
+html.v2p-theme-dark-default body #Top,
+:root body.v2p-theme-dark-default #Top,
+:root .v2p-theme-dark-default #Top,
+:root[data-darkreader-scheme="dark"] body #Top,
+:root body:has(#Wrapper.Night) #Top {
+    background-color: rgba(0, 0, 0, 0);
+}
+
+html.v2p-theme-dark-default #Main .cell .item_title .topic-link,
+:root body.v2p-theme-dark-default #Main .cell .item_title .topic-link,
+:root .v2p-theme-dark-default #Main .cell .item_title .topic-link,
+:root[data-darkreader-scheme="dark"] body #Main .cell .item_title .topic-link,
+:root body:has(#Wrapper.Night) #Main .cell .item_title .topic-link {
+    font-weight: normal;
+}
+
+html.v2p-theme-dark-default #search-container::before,
+:root body.v2p-theme-dark-default #search-container::before,
+:root .v2p-theme-dark-default #search-container::before,
+:root[data-darkreader-scheme="dark"] body #search-container::before,
+:root body:has(#Wrapper.Night) #search-container::before {
+    background-image: url("/static/img/search_icon_light.png");
+}
+/* --- SAFARI FIX 强制补丁 (整合版) --- */
+
+    /* 1. Tabs 标签栏修复 */
+    html.v2p-theme-dark-default #Main #Tabs .tab,
+    html.v2p-theme-dark-default #Tabs .tab {
+        color: var(--v2p-color-foreground) !important;
+        background-color: transparent;
+    }
+    html.v2p-theme-dark-default #Main #Tabs .tab:hover,
+    html.v2p-theme-dark-default #Tabs .tab:hover {
+        background-color: var(--v2p-color-bg-block);
+    }
+    html.v2p-theme-dark-default #Main #Tabs .tab_current,
+    html.v2p-theme-dark-default #Tabs .tab_current,
+    html.v2p-theme-dark-default .v2p-mobile #Tabs a.tab_current {
+        color: #fff !important;
+        background-color: var(--v2p-color-accent-500) !important;
+        border: none !important;
+    }
+
+    /* 2. Livid/Count 计数背景色修复 */
+    html.v2p-theme-dark-default .count_livid,
+    html.v2p-theme-dark-default #Main .cell .count_livid,
+    html.v2p-theme-dawn #Main .cell .count_livid,
+    html.v2p-theme-aqua #Main .cell .count_livid,
+
+    html.v2p-theme-dark-default a.count_livid,
+    html.v2p-theme-dark-default .v2p-mobile a.count_livid {
+        color: var(--v2p-color-button-foreground) !important;
+        background-color: var(--v2p-color-bg-block) !important;
+        border: none !important;
+    }
+
+    /* 3. [新增] 移动端菜单 (Menu Body) 修复 */
+    /* 强制菜单容器背景变黑 */
+    html.v2p-theme-dark-default #menu-body,
+    html.v2p-theme-dark-default .v2p-mobile #menu-body {
+        background-color: var(--v2p-color-bg-content) !important;
+        border: 1px solid var(--v2p-color-border) !important;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.5) !important;
+    }
+
+    /* 强制菜单内文字颜色变亮 */
+    html.v2p-theme-dark-default #menu-body .cell a,
+    html.v2p-theme-dark-default #menu-body .cell a.top,
+    html.v2p-theme-dark-default .v2p-mobile #menu-body .cell a {
+        color: var(--v2p-color-foreground) !important;
+        background-color: transparent !important;
+    }
+
+    /* 修复菜单内图标可能的白底问题 */
+    html.v2p-theme-dark-default #menu-body img.tool-icon {
+         filter: brightness(0.8); /*稍微压暗一点图标以免太刺眼*/
+    }
+    html.v2p-theme-dark-default .no {
+         background-color:var(--v2p-color-main-100);
+         margin-top:-3px;
+         border-radius:99px;
+    }
+    /* PRO 标识深色模式适配 */
+    html.v2p-theme-dark-default .badge.pro,
+    :root body.v2p-theme-dark-default .badge.pro,
+    :root[data-darkreader-scheme="dark"] body .badge.pro,
+    :root body:has(#Wrapper.Night) .badge.pro {
+         color: #6ee7b7 !important;
+         background-color: #064e3b !important;
+         border-color: #34d399 !important;
+    }
+
+.cell.item > table > tbody > tr > td:nth-child(2) {
+    width: 10px !important;
+    max-width: 15px !important;
+}
+/* ==========================================================================
+   移动端楼中楼 (Nested Replies) 专属优化
+   ========================================================================== */
+
+/* 1. 针对移动端，大幅减小嵌套回复的左缩进，改用“左侧边框”来体现层级 */
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] {
+    margin: 6px 0 6px 8px !important; /* 左缩进仅保留 8px */
+    padding: 8px 6px !important;      /* 减小内边距 */
+    border: none !important;
+    border-left: 2px solid var(--v2p-color-divider) !important; /* 使用实线边框表示层级 */
+    border-radius: 0 4px 4px 0 !important; /* 仅右侧圆角 */
+    background-color: var(--v2p-color-bg-subtle) !important; /* 稍微深一点的背景 */
+}
+
+/* 2. 处理多层嵌套时的背景叠加问题，避免太深 */
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] .cell[id^="r"] {
+    background-color: var(--v2p-color-bg-content) !important; /* 第三层变回亮色/暗色背景，形成交替感 */
+    margin-left: 6px !important;
+    border-left: 2px solid var(--v2p-color-accent-400) !important; /* 第三层换个边框色（可选） */
+}
+
+/* 3. 移动端嵌套回复中，头像和用户名的布局微调 */
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] table tr td:nth-child(1) {
+    width: 28px !important; /* 稍微限制头像列宽 */
+}
+
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] .avatar {
+    width: 20px !important; /* 嵌套回复头像缩小，节省空间 */
+    height: 20px !important;
+}
+
+/* 4. 隐藏嵌套回复中一些不必要的元素以节省空间 */
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] .ago {
+    font-size: 10px !important; /* 时间字体变小 */
+}
+.v2p-mobile #Main .cell[id^="r"] > table ~ .cell[id^="r"] .no {
+    display: none !important; /* 移动端嵌套内隐藏楼层号，避免干扰 */
+}
+
+/* 5. 修复移动端回复内容的行高和字体 */
+.v2p-mobile .reply_content {
+    font-size: 15px !important;
+    line-height: 1.5 !important;
+    overflow-wrap: break-word; /* 强行换行，防止长链接撑破布局 */
+}
+
+/* 6. 确保父级 Cell 在移动端不会因为 Padding 导致宽度不够 */
+.v2p-mobile #Main .cell[id^="r"] {
+    padding-right: 5px !important;
+    padding-left: 5px !important;
+}
+
+@supports not selector(:has(*)) {
+    :root #Wrapper.Night {
+        --v2p-color-main-50: unset;
+        --v2p-color-main-100: #2d333b;
+        --v2p-color-main-200: #374151;
+        --v2p-color-main-300: #374151;
+        --v2p-color-main-350: #6b7280cc;
+        --v2p-color-main-400: #6b7280;
+        --v2p-color-main-500: #9ca3af;
+        --v2p-color-main-600: #9ca3af;
+        --v2p-color-main-700: #d1d5db;
+        --v2p-color-main-800: #e5e7eb;
+        --v2p-color-main-900: #111827;
+        --v2p-color-main-950: #030712;
+        --v2p-color-accent-50: #064e3b;
+        --v2p-color-accent-100: #065f46;
+        --v2p-color-accent-200: #047857;
+        --v2p-color-accent-300: #059669;
+        --v2p-color-accent-400: #34d399;
+        --v2p-color-accent-500: #34d399;
+        --v2p-color-accent-600: #6ee7b7;
+        --v2p-color-orange-50: #593600;
+        --v2p-color-orange-100: #9a3412;
+        --v2p-color-orange-400: #fbe090;
+        --v2p-color-background: #1c2128;
+        --v2p-color-foreground: #adbac7;
+        --v2p-color-font-secondary: var(--v2p-color-main-600);
+        --v2p-color-button-background: #373e47;
+        --v2p-color-button-foreground: var(--v2p-color-foreground);
+        --v2p-color-button-background-hover: #444c56;
+        --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
+        --v2p-color-bg-content: #22272e;
+        --v2p-color-bg-hover-btn: var(--v2p-color-button-background-hover);
+        --v2p-color-bg-subtle: #f7f7f7;
+        --v2p-color-bg-input: var(--v2p-color-background);
+        --v2p-color-bg-search: var(--v2p-color-main-100);
+        --v2p-color-bg-search-active: var(--v2p-color-main-200);
+        --v2p-color-bg-widget: var(--v2p-color-bg-content);
+        --v2p-color-bg-reply: var(--v2p-color-main-100);
+        --v2p-color-bg-tooltip: var(--v2p-color-main-100);
+        --v2p-color-bg-avatar: var(--v2p-color-main-300);
+        --v2p-color-bg-block: #373e47;
+        --v2p-color-heart: #ef4444;
+        --v2p-color-heart-fill: #fca5a5;
+        --v2p-color-mask: rgb(99 110 123 / 40%);
+        --v2p-color-border: #444c56;
+        --v2p-color-input-border: #444c56;
+        --v2p-color-border-darker: #444c56;
+        --v2p-box-shadow: 0 0 0 1px var(--v2p-color-border);
+        --v2p-toast-shadow: none;
+        --link-color: var(--v2p-color-foreground);
+        --box-background-alt-color: var(--v2p-color-main-100);
+        --box-background-hover-color: var(--v2p-color-main-300);
+        --button-hover-color: var(--button-background-hover-color);
+        --button-border-color: var(--v2p-color-border);
+        --button-border-hover-color: #768390;
+        visibility: visible;
+    }
+    :root #Wrapper.Night #Logo {
+        background-image: url("https://www.v2ex.com/static/img/v2ex-alt@2x.png");
+    }
+    :root #Wrapper.Night::selection {
+        color: var(--v2p-color-background, #1c2128);
+        background-color: var(--v2p-color-foreground, #adbac7);
+    }
+    :root #Wrapper.Night img::selection {
+        background-color: var(--v2p-color-foreground, #adbac7);
+    }
+}
+body.v2p-theme-dawn,
+.v2p-theme-dawn {
+    --v2p-color-base: 32deg 57% 95%;
+    --v2p-color-surface: 35deg 100% 98%;
+    --v2p-color-overlay: 33deg 43% 91%;
+    --v2p-color-muted: 257deg 9% 61%;
+    --v2p-color-subtle: 248deg 12% 52%;
+    --v2p-color-text: 248deg 19% 40%;
+    --v2p-color-love: 343deg 35% 55%;
+    --v2p-color-gold: 35deg 81% 56%;
+    --v2p-color-rose: 3deg 53% 67%;
+    --v2p-color-pine: 197deg 53% 34%;
+    --v2p-color-foam: 189deg 30% 48%;
+    --v2p-color-iris: 268deg 21% 57%;
+    --v2p-color-main-600: hsl(47, 48.15%, 21.26%)
+    --v2p-color-accent-50: hsl(var(--v2p-color-foam) / 10%);
+    --v2p-color-accent-100: hsl(var(--v2p-color-foam) / 20%);
+    --v2p-color-accent-200: hsl(var(--v2p-color-foam) / 30%);
+    --v2p-color-accent-300: hsl(var(--v2p-color-foam) / 40%);
+    --v2p-color-accent-400: #34d399;
+    --v2p-color-accent-500: hsl(var(--v2p-color-foam) / 65%);
+    --v2p-color-accent-600: hsl(var(--v2p-color-foam) / 80%);
+    --v2p-color-orange-50: hsl(var(--v2p-color-gold) / 10%);
+    --v2p-color-orange-100: hsl(var(--v2p-color-gold) / 20%);
+    --v2p-color-orange-400: hsl(var(--v2p-color-gold));
+    --v2p-color-background: hsl(var(--v2p-color-base));
+    --v2p-color-foreground: hsl(38.09deg 19% 40%);
+    --v2p-color-selection-foreground: var(--v2p-color-foreground);
+    --v2p-color-selection-background: hsl(var(--v2p-color-muted) / 20%);
+    --v2p-color-selection-background-img: hsl(var(--v2p-color-muted) / 60%);
+    --v2p-color-font-secondary: hsl(37.89deg 18.63% 40%);
+    --v2p-color-font-tertiary: hsl(var(--v2p-color-subtle));
+    --v2p-color-font-quaternary: hsl(var(--v2p-color-subtle));
+    --v2p-color-button-background: hsl(var(--v2p-color-text) / 10%);
+    --v2p-color-button-foreground: var(--v2p-color-foreground);
+    --v2p-color-button-background-hover: hsl(var(--v2p-color-text) / 15%);
+    --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
+    --v2p-color-bg-content: hsl(var(--v2p-color-surface));
+    --v2p-color-bg-content-rgb: 250, 244, 237;
+    --v2p-color-bg-footer: var(--v2p-color-bg-content);
+    --v2p-color-bg-hover-btn: rgb(152 147 165 / 10%);
+    --v2p-color-bg-subtle: hsl(var(--v2p-color-pine) / 10%);
+    --v2p-color-bg-input: hsl(var(--v2p-color-overlay) / 40%);
+    --v2p-color-bg-search: hsl(var(--v2p-color-overlay) / 60%);
+    --v2p-color-bg-search-active: hsl(var(--v2p-color-overlay) / 90%);
+    --v2p-color-bg-widget: rgb(255 255 255 / 70%);
+    --v2p-color-bg-reply: #faf4ed;
+    --v2p-color-bg-tooltip: var(--v2p-color-bg-content);
+    --v2p-color-bg-tabs: hsl(34deg 53% 34% / 10%);
+    --v2p-color-bg-tpr: hsl(var(--v2p-color-text) / 10%);
+    --v2p-color-bg-avatar: hsl(var(--v2p-color-overlay));
+    --v2p-color-bg-block: hsl(var(--v2p-color-text) / 10%);
+    --v2p-color-bg-block-darker: hsl(var(--v2p-color-text) / 25%);
+    --v2p-color-bg-link: hsl(var(--v2p-color-text) / 10%);
+    --v2p-color-bg-link-hover: hsl(var(--v2p-color-text) / 15%);
+    --v2p-color-tabs: hsl(46.92deg 53% 34%);
+    --v2p-color-heart: #eb6f92;
+    --v2p-color-heart-fill: rgb(235 111 146 / 50%);
+    --v2p-color-mask: rgb(0 0 0 / 25%);
+    --v2p-color-divider: hsl(var(--v2p-color-muted) / 20%);
+    --v2p-color-border: hsl(var(--v2p-color-muted) / 20%);
+    --v2p-color-input-border: rgb(152 147 165 / 20%);
+    --v2p-color-border-darker: hsl(var(--v2p-color-muted) / 40%);
+    --v2p-color-link-visited: hsl(37.89, 18.63%, 60%);
+    --v2p-color-error: #eb6f92;
+    --v2p-color-bg-error: #fee2e2;
+
+    --v2p-color-cell-num: hsl(var(--v2p-color-subtle));
+    --v2p-box-shadow: 0 3px 5px 0 rgb(0 0 0 / 4%);
+    --v2p-widget-shadow: 0 9px 24px -3px rgb(0 0 0 / 6%),
+        0 4px 8px -1px rgb(0 0 0 /12%);
+    --v2p-toast-shadow: 0 6px 16px 0 rgb(0 0 0 / 8%),
+        0 3px 6px -4px rgb(0 0 0 / 12%), 0 9px 28px 8px rgb(0 0 0 / 5%);
+    --link-color: var(--v2p-color-foreground);
+    --link-visited-color:var(--v2p-color-foreground);
+    --box-background-alt-color: var(--v2p-color-bg-block);
+    --box-background-hover-color: var(--v2p-color-bg-link-hover);
+    --button-hover-color: var(--v2p-color-button-background-hover);
+    --button-border-color: var(--v2p-color-border);
+    --button-border-hover-color: var(--v2p-color-border-darker);
+    visibility: visible;
+}
+body.v2p-theme-dawn .button.special:hover,
+body.v2p-theme-dawn .button.special:hover:enabled,
+.v2p-theme-dawn .button.special:hover,
+.v2p-theme-dawn .button.special:hover:enabled {
+    text-shadow: none;
+}
+
+body.v2p-theme-aqua,
+.v2p-theme-aqua {
+    /* --- 核心颜色调整：从暖色 (32deg) 切换到冷色 (210-230deg) --- */
+
+    /* 基础和表面色：非常浅、高饱和度的冷白/浅灰蓝 */
+    --v2p-color-base: 220deg 18% 97%;   /* 整体背景: 略带蓝色的浅灰色 */
+    --v2p-color-surface: 240deg 100% 100%; /* 内容卡片背景: 纯白或极浅蓝白 */
+    --v2p-color-overlay: 210deg 12% 90%;  /* 遮罩/输入框背景: 干净的浅灰色 */
+
+    /* 文本颜色：使用深蓝色或深灰色以提供高对比度 */
+    --v2p-color-muted: 215deg 10% 55%;  /* 次要文本: 中等冷灰 */
+    --v2p-color-subtle: 220deg 15% 45%; /* 次级文本: 较深的冷灰 */
+    --v2p-color-text: 220deg 25% 25%;  /* 主文本: 接近黑色的深蓝灰 */
+
+    /* 强调色：Aqua/Cyan/Blue，用于链接和高光 */
+    --v2p-color-love: 345deg 60% 55%;  /* 红色/点赞: 保持一个略冷的洋红/玫瑰色 */
+    --v2p-color-gold: 35deg 81% 56%;   /* 警告/金: 保持不变，或略调冷*/
+    --v2p-color-rose: 3deg 53% 67%;    /* 错误/玫瑰: 保持不变 */
+    --v2p-color-pine: 180deg 53% 34%;  /* 蓝绿色/主要强调色 (Pine -> Cyan) */
+    --v2p-color-foam: 195deg 70% 45%;  /* 强调色 (Aqua/Foam) */
+    --v2p-color-iris: 240deg 50% 60%;  /* 紫色/次要强调色 (Iris -> Blue) */
+
+    /* --- 衍生色（强调色使用 --v2p-color-iris，以提供蓝色高光） --- */
+    --v2p-color-accent-50: #ecfdf5;
+    --v2p-color-accent-100: hsl(var(--v2p-color-iris) / 20%);
+    --v2p-color-accent-200: hsl(var(--v2p-color-iris) / 30%);
+    --v2p-color-accent-300: hsl(var(--v2p-color-iris) / 40%);
+    --v2p-color-accent-400: #34d399;
+    --v2p-color-accent-500: hsl(var(--v2p-color-iris) / 65%);
+    --v2p-color-accent-600: hsl(var(--v2p-color-iris) / 80%);
+    --v2p-color-orange-50: hsl(var(--v2p-color-gold) / 10%);
+    --v2p-color-orange-100: hsl(var(--v2p-color-gold) / 20%);
+    --v2p-color-orange-400: hsl(var(--v2p-color-gold));
+
+    /* --- 背景 & 字体 --- */
+    --v2p-color-background: #f2f7fa;
+    --v2p-color-foreground: hsl(var(--v2p-color-text));
+
+    --v2p-color-selection-foreground: var(--v2p-color-surface); /* 选中字体为白色 */
+    --v2p-color-selection-background: hsl(var(--v2p-color-iris) / 60%); /* 选中背景为蓝色 */
+    --v2p-color-selection-background-img: hsl(var(--v2p-color-iris) / 80%);
+
+    --v2p-color-font-secondary: hsl(var(--v2p-color-subtle));
+    --v2p-color-font-tertiary: hsl(var(--v2p-color-subtle));
+    --v2p-color-font-quaternary: hsl(var(--v2p-color-subtle));
+
+    /* --- 交互元素 --- */
+    --v2p-color-button-background: hsl(var(--v2p-color-iris) / 10%); /* 按钮背景使用冷色调 */
+    --v2p-color-button-foreground: var(--v2p-color-foreground);
+    --v2p-color-button-background-hover: hsl(var(--v2p-color-iris) / 15%);
+    --v2p-color-button-foreground-hover: var(--v2p-color-foreground);
+
+    /* --- 界面元素 --- */
+    --v2p-color-bg-content: hsl(var(--v2p-color-surface)); /* 内容卡片使用纯白 */
+    --v2p-color-bg-content-rgb: 255, 255, 255;
+    --v2p-color-bg-footer: var(--v2p-color-bg-content);
+    --v2p-color-bg-hover-btn: hsl(var(--v2p-color-iris) / 10%); /* 按钮悬停使用冷色高光 */
+    --v2p-color-bg-subtle: hsl(var(--v2p-color-iris) / 10%);
+    --v2p-color-bg-input: hsl(var(--v2p-color-overlay) / 50%);
+    --v2p-color-bg-search: hsl(var(--v2p-color-overlay) / 70%);
+    --v2p-color-bg-search-active: hsl(var(--v2p-color-overlay));
+    --v2p-color-bg-widget: rgb(255 255 255 / 85%); /* 略带透明的白色 */
+    --v2p-color-bg-reply: #f3f6fa; /* 浅浅的冷蓝色背景 */
+    --v2p-color-bg-tooltip: var(--v2p-color-bg-content);
+    --v2p-color-bg-tabs: hsl(var(--v2p-color-iris) / 5%);
+    --v2p-color-bg-tpr: hsl(var(--v2p-color-text) / 10%);
+    --v2p-color-bg-avatar: hsl(var(--v2p-color-overlay));
+    --v2p-color-bg-block: hsl(var(--v2p-color-iris) / 5%); /* 内容块极浅蓝色背景 */
+    --v2p-color-bg-block-darker: hsl(var(--v2p-color-iris) / 15%);
+    --v2p-color-bg-link: hsl(var(--v2p-color-iris) / 10%);
+    --v2p-color-bg-link-hover: hsl(var(--v2p-color-iris) / 15%);
+
+    --v2p-color-tabs: #394d65; /* Tabs 使用蓝色强调 */
+
+    /* --- 边框 & 阴影 --- */
+    --v2p-color-divider: hsl(var(--v2p-color-muted) / 15%); /* 更浅的边框 */
+    --v2p-color-border: hsl(var(--v2p-color-muted) / 15%);
+    --v2p-color-input-border: hsl(220deg 15% 75%); /* 浅灰色冷调输入框边框 */
+    --v2p-color-border-darker: hsl(var(--v2p-color-muted) / 30%);
+
+    /* --- 其他 --- */
+    --v2p-color-link-visited: hsl(var(--v2p-color-subtle));
+    --v2p-color-error: #eb6f92;
+    --v2p-color-bg-error: #fee2e2;
+    --v2p-color-cell-num: hsl(var(--v2p-color-subtle));
+    --v2p-box-shadow: 0 1px 2px 0 rgb(0 0 0 / 6%), 0 1px 3px 0 rgb(0 0 0 / 4%); /* 调整为更轻的阴影 */
+    --v2p-widget-shadow: 0 6px 16px -3px rgb(0 0 0 / 4%),
+        0 2px 4px -1px rgb(0 0 0 /8%); /* 调整为更轻的阴影 */
+    --v2p-toast-shadow: var(--v2p-widget-shadow);
+
+    /* --- 别名 (使用 Accent Color Blue) --- */
+    --link-color: #394d65; /* 链接使用蓝色 */
+    --link-visited-color:var(--v2p-color-foreground);
+    --box-background-alt-color: var(--v2p-color-bg-block);
+    --box-background-hover-color: var(--v2p-color-bg-link-hover);
+    --button-hover-color: var(--v2p-color-button-background-hover);
+    --button-border-color: var(--v2p-color-border);
+    --button-border-hover-color: var(--v2p-color-border-darker);
+
+    visibility: visible;
+}
+
+body {
+    position: relative;
+}
+body.v2p-modal-open {
+    overflow: hidden;
+}
+body .button.v2p-prev-btn,
+body .button.v2p-next-btn {
+    padding: 0 15px;
+}
+body #Top a:has(#Logo.v2p-logo) {
+    display: inline-flex;
+    align-items: center;
+}
+body #Logo.v2p-logo {
+    width: unset;
+    height: 25px;
+    padding: 0 8px;
+    background-image: none !important;
+}
+.v2p-hover-btn {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    z-index: 1;
+    margin: 0;
+    text-decoration: none;
+    white-space: nowrap;
+    background: none;
+    background-color: rgba(0, 0, 0, 0);
+    transition: color 0.2s;
+}
+.v2p-hover-btn::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    transform: scale(0.65);
+    opacity: 0;
+    background-color: var(--v2p-color-bg-hover-btn);
+    border-radius: 99px;
+    transition:
+        background-color 0.15s,
+        color 0.15s,
+        transform 0.15s,
+        opacity 0.15s;
+}
+.v2p-hover-btn:hover {
+    text-decoration: none;
+}
+.v2p-hover-btn:hover::before {
+    transform: scale(1);
+    opacity: 1;
+}
+.v2p-hover-btn-disabled {
+    pointer-events: none;
+    opacity: 0.8;
+}
+.v2p-icon-heart {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    color: var(--v2p-color-heart);
+}
+.v2p-icon-heart svg {
+    fill: var(--v2p-color-heart-fill);
+}
+
+.node {
+    border-radius:99px !important;
+}
+#Main .cell[id^="r"] .v2p-auto-hide {
+    overflow: hidden;
+    display: inline-flex;
+    width: 0;
+}
+#Main #reply-box .v2p-reply-preview {
+    font-size: 15px;
+    line-height: 1.6;
+}
+#Main .cell:hover .v2p-topic-preview-btn,
+#Main .cell:hover .v2p-topic-ignore-btn,
+#Rightbar .cell:hover .v2p-topic-preview-btn,
+#Rightbar .cell:hover .v2p-topic-ignore-btn {
+    visibility: visible;
+}
+#Rightbar .v2p-info-row {
+    display: block;
+    font-size: 12px;
+    color: var(--v2p-color-accent-500);
+    text-align: center;
+}
+#Rightbar .v2p-info-row:hover {
+    text-decoration: none;
+    background-color: var(--v2p-color-accent-50);
+}
+#Rightbar .v2p-topic-preview-btn {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: 20px;
+    font-size: 12px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0 0 3px var(--v2p-color-bg-content);
+}
+
+.v2p-tool-box {
+    position: sticky;
+    z-index: var(--zidx-tools-card);
+    top: var(--v2p-layout-row-gap);
+}
+.v2p-tool-box .v2p-tools {
+    display: grid;
+    grid-auto-rows: auto;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px 15px;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--v2p-color-font-secondary);
+}
+.v2p-tool {
+    display: inline-flex;
+    gap: 0 5px;
+    align-items: center;
+    padding: 3px 0;
+}
+.v2p-tool:hover {
+    color: var(--v2p-color-button-foreground-hover);
+}
+.v2p-tool .v2p-tool-icon {
+    width: 16px;
+    height: 16px;
+}
+.v2p-topic-actions {
+    display: inline-flex;
+    gap: 2px 10px;
+}
+.v2p-topic-preview-btn {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--v2p-color-button-foreground);
+    visibility: hidden;
+    background-color: var(--v2p-color-button-background-hover);
+    border: none;
+    border-radius: 3px;
+    outline: none;
+}
+.v2p-topic-ignore-btn {
+    cursor: pointer;
+    margin-left: 8px;
+    visibility: hidden;
+}
+.v2p-topic-preview {
+    font-size: 15px;
+    line-height: 1.6;
+    padding: var(--v2p-tp-preview-pd);
+}
+.v2p-tpr-loading {
+    --tpr-h: 30px;
+    --tpr-h-p: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 25px;
+}
+.v2p-tpr-loading .v2p-tpr {
+    background-color: var(--v2p-color-bg-tpr);
+    border-radius: 5px;
+}
+.v2p-tpr-loading .v2p-tpr-info {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+.v2p-tpr-info-avatar {
+    width: var(--tpr-h);
+    height: var(--tpr-h);
+}
+.v2p-tpr-info-text {
+    width: 50%;
+    height: var(--tpr-h);
+}
+.v2p-tpr-loading .v2p-tpr-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 15px 0 20px;
+}
+.v2p-tpr-loading .v2p-tpr-content .v2p-tpr-content-p {
+    height: var(--tpr-h-p);
+}
+.v2p-tpr-loading .v2p-tpr-cmt {
+    display: flex;
+    gap: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--v2p-color-border);
+}
+.v2p-tpr-loading .v2p-tpr-cmt .v2p-tpr-cmt-avatar {
+    width: 50px;
+    height: 50px;
+}
+.v2p-tpr-loading .v2p-tpr-cmt .v2p-tpr-cmt-right {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 10px;
+}
+.v2p-tpr-loading .v2p-tpr-cmt .v2p-tpr-cmt-right .v2p-tpr-cmt-header {
+    width: 50%;
+    height: var(--tpr-h);
+}
+.v2p-tpr-loading .v2p-tpr-cmt .v2p-tpr-cmt-right .v2p-tpr-cmt-p {
+    height: var(--tpr-h-p);
+}
+.v2p-tp-info-bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.v2p-tp-info,
+.v2p-tp-read {
+    overflow: hidden;
+    display: inline-flex;
+    gap: 20px;
+    align-items: center;
+    padding: 5px 10px;
+    font-size: 13px;
+    background-color: var(--v2p-color-button-background);
+    border-radius: 5px;
+}
+.v2p-tp-read {
+    cursor: pointer;
+    user-select: none;
+    gap: 4px;
+}
+.v2p-tp-read:hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+.v2p-tp-read-icon {
+    width: 16px;
+    height: 16px;
+}
+.v2p-tp-member {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    font-weight: bold;
+}
+.v2p-tp-avatar {
+    width: 20px;
+    height: 20px;
+    background-color: var(--v2p-color-bg-avatar);
+    border-radius: 3px;
+}
+.v2p-topic-preview-addons {
+    margin-top: 30px;
+}
+#Main.v2p-topic-preview > .box {
+    border: 1px solid var(--v2p-color-border);
+}
+a.v2p-topic-preview-title-link:hover {
+    text-decoration: underline 1.5px;
+    text-underline-offset: 0.46ex;
+}
+.v2p-dot {
+    margin: 0 8px;
+    font-size: 15px;
+    font-weight: 800;
+}
+.v2p-paging {
+    background: none !important;
+}
+.v2p-paging.cell {
+    border-bottom: none;
+}
+.v2p-modal-mask {
+    position: fixed;
+    z-index: var(--zidx-modal-mask);
+    inset: 0;
+    overflow: hidden;
+    overflow-y: auto;
+    padding: min(2vh, 60px);
+    background-color: var(--v2p-color-mask);
+}
+.v2p-popup {
+    font-size: 14px;
+    background: var(--v2p-color-bg-widget);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--box-border-color);
+    border-radius: 8px;
+    box-shadow: var(--v2p-widget-shadow);
+    position: absolute;
+    z-index: 2000; /* Ensure it's above other elements */
+    top: 0;
+    left: 0;
+}
+.v2p-popup-content {
+    overflow-y: auto;
+    width: max-content;
+}
+.v2p-toast {
+    position: fixed;
+    z-index: var(--zidx-toast);
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 15px;
+    font-size: 14px;
+    color: var(--v2p-color-background);
+    background: var(--v2p-color-foreground);
+    border-radius: 8px;
+    box-shadow: var(--v2p-toast-shadow);
+}
+.v2p-modal-main {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: 800px;
+    height: 100%;
+    margin: 0 auto;
+    background-color: var(--v2p-color-bg-content);
+    border-radius: var(--box-border-radius);
+}
+.v2p-modal-header {
+    display: flex;
+    gap: 0 20px;
+    align-items: center;
+    padding: 15px 20px 20px;
+    background-color: var(--v2p-color-bg-content);
+    border-bottom: 1px solid var(--box-border-color);
+}
+.v2p-modal-title {
+    overflow: hidden;
+    padding: 2px 0;
+    font-size: 16px;
+    font-weight: bold;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.v2p-modal-actions {
+    display: flex;
+    gap: 0 10px;
+    align-items: center;
+    margin-left: auto;
+}
+.v2p-modal-content {
+    position: relative;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    flex: 1;
+    outline: none;
+}
+.v2p-modal-content #Main.v2p-topic-preview > .box {
+    border: none;
+    box-shadow: none;
+}
+.v2p-modal-comments {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    padding: 0 20px;
+    visibility: hidden;
+}
+.v2p-modal-comments.v2p-tab-content-active {
+    z-index: 20;
+    visibility: visible;
+}
+.v2p-modal-comment-tabs {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 4px 5px;
+    font-size: 14px;
+    font-weight: normal;
+    background-color: var(--button-background-color);
+    border-radius: 4px;
+}
+.v2p-modal-comment-tabs > [data-tab-key] {
+    cursor: pointer;
+    padding: 4px 5px;
+    border-radius: 4px;
+}
+.v2p-modal-comment-tabs > [data-tab-key]:hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+.v2p-modal-comment-tabs > [data-tab-key].v2p-tab-active {
+    color: var(--v2p-color-foreground);
+    background-color: var(--v2p-color-accent-100);
+}
+.v2p-no-pat {
+    padding: 30px 20px;
+    font-size: 15px;
+    text-align: center;
+}
+.v2p-no-pat .v2p-no-pat-title {
+    font-size: 16px;
+    font-weight: bold;
+}
+.v2p-no-pat .v2p-no-pat-desc {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 15px;
+}
+.v2p-no-pat .v2p-no-pat-block {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 5px;
+    padding: 2px 10px;
+    background-color: var(--v2p-color-bg-block);
+    border-radius: 2px;
+}
+.v2p-no-pat .v2p-no-pat-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    max-width: 800px;
+    margin-top: 20px;
+    padding: 20px;
+    background-color: var(--v2p-color-bg-block);
+    border-radius: 10px;
+}
+.v2p-no-pat .v2p-no-pat-step {
+    flex: 1;
+}
+.v2p-no-pat .v2p-no-pat-img {
+    width: 100%;
+    border-radius: 8px;
+    box-shadow: var(--v2p-widget-shadow);
+}
+.v2p-no-pat .v2p-icon-logo {
+    width: 15px;
+    height: 15px;
+}
+.v2p-likes-box {
+    user-select: none;
+    position: relative;
+    top: 3px;
+    display: inline-flex;
+    column-gap: 5px;
+    align-items: center;
+}
+.v2p-likes-box.v2p-thanked {
+    font-weight: bold;
+    color: var(--v2p-color-heart);
+    opacity: 0.8;
+}
+.v2p-likes-box.v2p-thanked .v2p-icon-heart svg {
+    fill: var(--v2p-color-heart);
+}
+@supports not selector(:has(*)) {
+    #Main .cell[id^="r"] > table:hover .v2p-controls {
+        opacity: 1;
+    }
+}
+@supports selector(:has(*)) {
+    #Main .cell[id^="r"]:not(:has(.cell:hover)) > table:hover .v2p-auto-hide {
+        width: auto;
+    }
+    #Main .cell[id^="r"]:not(:has(.cell:hover)) > table:hover .v2p-controls {
+        opacity: 1;
+    }
+}
+.v2p-controls {
+    display: inline-flex;
+    column-gap: 15px;
+    margin-right: 15px;
+    font-size: 12px;
+    opacity: 0;
+}
+.v2p-controls svg {
+
+    opacity: 1 !important;    /* 保证颜色一致 */
+}
+.v2p-controls > a {
+    text-decoration: none;
+}
+.v2p-control {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 4px 0;
+    color: var(--v2p-color-font-tertiary);
+}
+.v2p-control::after {
+    pointer-events: none;
+    z-index: var(--zidx-tip);
+    overflow: hidden;
+    width: max-content;
+    min-width: 30px;
+    padding: 2px 5px;
+    font-size: 12px;
+    color: var(--v2p-color-foreground);
+    text-align: center;
+    white-space: nowrap;
+    background-color: var(--v2p-color-bg-tooltip);
+    border-radius: 4px;
+    box-shadow: var(--v2p-widget-shadow);
+    position: absolute;
+    top: -8px;
+    transform: translateY(-100%);
+    opacity: 0;
+}
+.v2p-control:hover {
+    color: var(--v2p-color-font-secondary);
+}
+.v2p-control.v2p-thanked {
+    cursor: default;
+    color: var(--v2p-color-heart);
+}
+.v2p-control:hover::after {
+    opacity: 1;
+}
+.v2p-control.v2p-control-hide::after {
+    content: "\u9690\u85CF\u56DE\u590D";
+}
+.v2p-control.v2p-control-thank::after {
+    content: "\u611F\u8C22\u56DE\u590D";
+}
+.v2p-control.v2p-control-thank.v2p-thanked::after {
+    content: "\u5DF2\u611F\u8C22";
+}
+.v2p-control.v2p-control-reply::after {
+    content: "\u56DE\u590D";
+}
+.topic_buttons .v2p-tb.v2p-hover-btn {
+    color: var(--v2p-color-font-secondary);
+}
+.topic_buttons .v2p-tb.v2p-hover-btn::after {
+    display: none;
+}
+.topic_buttons .v2p-tb.v2p-hover-btn:hover {
+    color: currentColor;
+}
+.v2p-tb-icon {
+    width: 15px;
+    height: 15px;
+}
+.v2p-emoji-container {
+    overflow-y: auto;
+    max-height: 285px;
+    padding: 15px 18px;
+    color: var(--v2p-color-font-secondary);
+}
+.v2p-member-card {
+    max-width: 300px;
+    max-height: 285px;
+    padding: 12px;
+    font-size: 13px;
+    text-align: left;
+}
+.v2p-member-card .v2p-info {
+    display: flex;
+    gap: 15px;
+}
+.v2p-member-card .v2p-info-right {
+    padding: 2px 0;
+}
+.member-activity-mobile-wrapper {
+    margin:0 10px !important;
+}
+.v2p-member-card .v2p-avatar-box {
+    overflow: hidden;
+    display: inline-block;
+    width: 73px;
+    height: 73px;
+    background-color: var(--button-background-hover-color);
+    border-radius: 5px;
+}
+.v2p-member-card .v2p-avatar {
+    width: 100%;
+    height: 100%;
+}
+.v2p-member-card .v2p-username {
+    font-size: 16px;
+    font-weight: bold;
+}
+.v2p-member-card .v2p-no {
+    margin: 5px 0;
+}
+.v2p-member-card .v2p-no,
+.v2p-member-card .v2p-created-date {
+    width: 160px;
+    height: 16px;
+}
+.v2p-member-card .v2p-loading {
+    background-color: var(--button-background-hover-color);
+    border-radius: 4px;
+}
+.v2p-member-card .v2p-bio {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-height: 1.4;
+    margin-top: 10px;
+}
+.v2p-member-card-actions {
+    padding: 10px 0 0;
+}
+.v2p-reply-tags {
+    cursor: pointer;
+    display: inline-flex;
+    margin: 0 0 2px;
+    padding: 0 3px;
+    font-size: 12px;
+    background-color: var(--button-background-hover-color);
+    border-radius: 3px;
+}
+.v2p-reply-tags-inline {
+    overflow: hidden;
+    max-width: 300px;
+    margin: 0 5px 0 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.v2p-emoticons-box {
+    font-size: 15px;
+}
+.v2p-emoji-group ~ .v2p-emoji-group {
+    margin-top: 10px;
+}
+.v2p-emoji-title {
+    margin: 0 0 10px;
+    font-size: 14px;
+    text-align: left;
+}
+.v2p-emoji-list {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 5px;
+    font-size: 20px;
+}
+.v2p-emoji {
+    cursor: pointer;
+    height: 20px;
+    padding: 3px;
+    line-height: 20px;
+    border-radius: 4px;
+}
+.v2p-emoji:hover {
+    background-color: var(--box-background-hover-color);
+}
+.v2p-emoji > img {
+    height: 100%;
+}
+.v2p-decode {
+    cursor: copy;
+    position: relative;
+    padding: 2px 4px;
+    font-size: 13px;
+    color: var(--v2p-color-orange-400);
+    text-decoration: none;
+    background-color: var(--v2p-color-orange-50);
+}
+.v2p-decode::after {
+    pointer-events: none;
+    z-index: var(--zidx-tip);
+    overflow: hidden;
+    width: max-content;
+    min-width: 30px;
+    padding: 2px 5px;
+    font-size: 12px;
+    color: var(--v2p-color-foreground);
+    text-align: center;
+    white-space: nowrap;
+    background-color: var(--v2p-color-bg-tooltip);
+    border-radius: 4px;
+    box-shadow: var(--v2p-widget-shadow);
+    content: attr(data-title);
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    opacity: 0;
+}
+.v2p-decode:hover {
+    color: var(--v2p-color-orange-400);
+}
+.v2p-decode:hover::after {
+    opacity: 1;
+}
+.v2p-reply-content {
+    position: relative;
+}
+.v2p-reply-content .v2p-expand-btn.normal.button {
+    position: absolute;
+    z-index: var(--zidx-expand-btn);
+    bottom: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    font-weight: 400;
+}
+.v2p-reply-content.v2p-collapsed::before {
+    pointer-events: none;
+    content: "";
+    position: absolute;
+    z-index: var(--zidx-expand-mask);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 130px;
+    background: linear-gradient(to top, var(--bg-reply) 10px, transparent);
+}
+.v2p-reply-content.v2p-collapsed .reply_content a,
+.v2p-reply-content.v2p-collapsed .reply_content .embedded_video {
+    pointer-events: none;
+}
+.v2p-reply-content.v2p-collapsed .v2p-expand-btn.normal.button {
+    bottom: 10px;
+    transform: translateX(-50%);
+}
+.cell[id^="r"] .cell[id^="r"] .v2p-reply-content .v2p-expand-btn.normal.button {
+    color: var(--v2p-color-button-foreground);
+    background: var(--v2p-color-button-background-hover);
+    box-shadow: var(--button-hover-shadow);
+}
+.v2p-em#Top>.content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 5px;
+}
+/* 屏蔽原生主题切换按钮 */
+/* 屏蔽原生主题切换按钮 (精确匹配) */
+a.light-toggle[href^="/settings/night/toggle"],
+a[href*="/settings/night/toggle"] {
+    display: none !important;
+}
+.v2p-empty-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 20px;
+    font-size: 14px;
+    color: var(--v2p-color-font-secondary);
+}
+.v2p-empty-content .v2p-text-emoji {
+    font-size: 20px;
+}
+.v2p-topic-reply-ref {
+    margin: 0 -10px 15px;
+    padding: 5px 10px;
+    font-size: 13px;
+    color: var(--v2p-color-font-tertiary);
+    background-color: var(--v2p-color-bg-block);
+    border-radius: 5px;
+}
+.v2p-topic-reply-box {
+    margin-top: 50px;
+    padding: 30px 0;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--v2p-color-font-secondary);
+    border-top: 1px solid var(--v2p-color-divider);
+}
+.v2p-topic-reply ~ .v2p-topic-reply {
+    margin-top: 15px;
+}
+.v2p-topic-reply-member {
+    display: inline;
+    font-weight: bold;
+    color: var(--v2p-color-main-700);
+}
+.v2p-topic-reply-avatar {
+    position: relative;
+    top: 2px;
+    overflow: hidden;
+    width: 15px;
+    height: 15px;
+    margin-right: 5px;
+    object-fit: cover;
+    background-color: var(--v2p-color-bg-avatar);
+    border-radius: 2px;
+}
+.v2p-topic-reply-content {
+    display: inline;
+}
+.v2p-topic-reply-tip {
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--v2p-color-font-quaternary);
+    text-align: center;
+}
+.v2p-reply-wrap {
+    resize: none;
+    overflow: hidden;
+    height: unset;
+    margin-bottom:10px;
+    min-height: 140px !important;
+    max-height: 800px !important;
+    font-size: 15px;
+    color: currentColor;
+    background-color: var(--v2p-color-bg-input);
+    border: 1px solid var(--button-border-color);
+    border-radius: 8px;
+    transition: opacity 0.25s;
+}
+.v2p-reply-wrap::placeholder {
+    font-size: 15px;
+    color: var(--v2p-color-font-tertiary);
+}
+.v2p-reply-wrap:is(:focus, :focus-within) {
+    background-color: rgba(0, 0, 0, 0);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--button-border-color);
+}
+.v2p-reply-wrap #reply_content {
+    background-color: rgba(0, 0, 0, 0);
+    border: none;
+}
+.v2p-reply-wrap #reply_content::placeholder {
+    font-size: 14px;
+    color: var(--v2p-color-font-tertiary);
+}
+.v2p-reply-wrap #reply_content:focus {
+    background-color: var(--v2p-color-bg-content);
+    outline: none;
+}
+.v2p-reply-upload-bar {
+    cursor: pointer;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--v2p-color-font-tertiary);
+    background-color: var(--v2p-color-bg-input);
+    border-top: 1px dashed var(--v2p-color-border-darker);
+}
+.v2p-reply-upload-bar-disabled {
+    pointer-events: none;
+}
+.v2p-footer {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 35px 10px 20px;
+    font-size: 12px;
+    color: var(--v2p-color-font-tertiary);
+    border-top: 1px solid var(--v2p-color-divider);
+}
+.v2p-footer a:hover {
+    text-decoration: none;
+}
+.v2p-footer-logo {
+    --logo-size: 16px;
+    position: absolute;
+    top: calc(-1 * (var(--logo-size) + 5px) / 2);
+    left: 50%;
+    transform: translateX(-50%);
+    display: inline-flex;
+    box-sizing: border-box;
+    padding: 3px 25px;
+    background-color: var(--v2p-color-bg-footer);
+}
+.v2p-footer-logo svg {
+    width: var(--logo-size);
+}
+.v2p-footer-text {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 240px;
+    color: var(--v2p-color-font-secondary);
+}
+.v2p-footer-links {
+    display: inline-flex;
+    gap: 0 8px;
+    align-items: center;
+}
+.v2p-footer-link {
+    padding: 4px 5px;
+    color: currentColor;
+}
+.v2p-footer-brand {
+    display: inline-flex;
+    gap: 0 15px;
+    align-items: center;
+    justify-content: flex-end;
+    width: 240px;
+}
+.v2p-footer-brand .v2p-github-ref {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 2px 0;
+}
+.v2p-color-mode-toggle {
+    height: 25px !important;
+    padding: 5px !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center;
+}
+.v2p-color-mode-toggle:hover {
+    opacity: 1;
+}
+.v2p-reply-tabs {
+    display: flex;
+    gap: 0 6px;
+    align-items: center;
+    font-size: 14px;
+}
+.v2p-reply-tabs .v2p-reply-tab {
+    cursor: pointer;
+    padding: 2px 3px;
+}
+.v2p-reply-tabs .v2p-reply-tab.active {
+    text-decoration: underline;
+    text-decoration-color: var(--v2p-color-font-tertiary);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+}
+.v2p-select-dropdown {
+    padding: 5px;
+    font-size: 12px;
+    border-radius: 5px;
+}
+.v2p-select-item {
+    cursor: pointer;
+    padding: 5px 10px;
+    white-space: nowrap;
+    border-radius: 4px;
+}
+.v2p-select-item:hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+.v2p-select-item.v2p-select-item-active {
+    background-color: var(--v2p-color-accent-50);
+}
+.v2p-preview-retry,
+.v2p-topic-preview-retry,
+a.v2p-preview-retry,
+a.v2p-topic-preview-retry,
+a:link.v2p-preview-retry,
+a:link.v2p-topic-preview-retry {
+    text-decoration: underline 1px;
+    text-underline-offset: var(--v2p-underline-offset);
+    cursor: pointer;
+}
+.v2p-indent .v2p-member-ref {
+    display: none;
+}
+.v2p-member-ref + br {
+    display: none;
+}
+.v2p-member-ref + br + b {
+    display: none;
+}
+.v2p-member-ref.v2p-member-ref-show {
+    display: inline;
+}
+.v2p-layout-toggle {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    padding: 4px 2px;
+    color: var(--v2p-color-font-tertiary);
+}
+.v2p-content-layout.v2p-content-layout {
+    max-width: 2000px;
+}
+.v2p-content-layout.v2p-content-layout .v2p-horizontal-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--v2p-layout-column-gap);
+}
+.v2p-left-side {
+    flex: 1;
+}
+.v2p-left-side > .box {
+    position: sticky;
+    top: var(--v2p-layout-row-gap);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 2 * var(--v2p-layout-row-gap));
+}
+.v2p-left-side > .box > .header {
+    flex-shrink: 0;
+}
+.v2p-left-side .v2p-left-side-content {
+    overflow: auto;
+    flex: 1;
+    border-bottom: 1px solid var(--box-border-color);
+}
+.v2p-right-side {
+    flex: 1;
+}
+.v2p-register-days {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 2px;
+    padding: 0 2px;
+    color: var(--v2p-color-orange-400);
+    background-color: var(--v2p-color-orange-100);
+    border-radius: 2px;
+}
+.v2p-register-days.v2p-register-days-large {
+    display: inline-flex;
+    margin-left: 10px;
+    padding: 2px 5px;
+    font-size: 16px;
+    line-height: 1.4;
+    border-radius: 4px;
+}
+.v2p-topics-hot-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 50px 0;
+    color: currentColor;
+}
+.v2p-topics-hot-loading .v2p-icon-loading {
+    width: 40px;
+}
+.v2p-topics-hot-header {
+    display: flex;
+    align-items: center;
+}
+.v2p-topics-hot-picker {
+    cursor: pointer;
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    margin-left: auto;
+    padding: 1px 6px;
+    font-size: 13px;
+    background-color: var(--v2p-color-button-background);
+    border-radius: 4px;
+}
+.v2p-topics-hot-picker:hover {
+    background-color: var(--v2p-color-button-background-hover);
+}
+.v2p-topics-hot-icon {
+    position: relative;
+    top: -2px;
+    width: 1em;
+    height: 1em;
+}
+.v2p-tag-block {
+    margin-bottom: 10px;
+}
+@supports (filter: blur(6px)) {
+    .v2p-hide-account {
+        opacity: 0.5;
+        filter: blur(6px);
+    }
+}
+@supports not (filter: blur(6px)) {
+    .v2p-hide-account {
+        opacity: 0;
+    }
+}
+@supports (filter: blur(6px)) {
+    .v2p-hide-balance {
+        opacity: 0.5;
+        filter: blur(6px);
+    }
+    .v2p-hide-balance:hover {
+        opacity: 1;
+        filter: none;
+    }
+}
+@supports not (filter: blur(6px)) {
+    .v2p-hide-balance {
+        opacity: 0;
+    }
+    .v2p-hide-balance:hover {
+        opacity: 1;
+    }
+}
+.v2p-member-name {
+    display: flex;
+    align-items: center;
+}
+.v2p-settings-header.page-content-header {
+    gap: 10px;
+}
+.v2p-settings-header.page-content-header .v2p-settings-icon {
+    width: 40px;
+    height: 40px;
+    margin: 0;
+}
+.v2p-settings-header.page-content-header .v2p-settings-title {
+    padding: 0;
+    white-space: nowrap;
+}
+.v2p-settings-header.page-content-header .v2p-settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+}
+.v2p-link-preview-btn {
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    height: 100%;
+    margin-left: 5px;
+    padding: 0 5px;
+    font-size: 12px;
+    color: var(--v2p-color-bg-content);
+    background-color: var(--v2p-color-accent-500);
+    border-radius: 3px;
+}
+.v2p-link-preview-btn:hover {
+    background-color: var(--v2p-color-accent-600);
+}
+#site-header #site-header-menu #menu-entry {
+    border-radius:999px;
+    }
+
+#node_sidebar.v2p-node-sidebar-flamewar {
+    background-color: var(--v2p-color-orange-50);
+    border: var(--v2p-color-orange-50);
+    border-radius: var(--v2p-box-radius);
+}
+/* 隐藏节点侧栏提示块（含内联样式警示） */
+#node_sidebar {
+    display: none !important;
+}
+/* 隐藏包含 #node_sidebar 的父容器，避免留下空白块 */
+.box:has(#node_sidebar) {
+    display: none !important;
+}
+html.v2p-theme-dark-default #node_sidebar,
+:root body.v2p-theme-dark-default #node_sidebar,
+:root .v2p-theme-dark-default #node_sidebar,
+:root[data-darkreader-scheme="dark"] body #node_sidebar,
+:root body:has(#Wrapper.Night) #node_sidebar {
+    background-color: var(--v2p-color-bg-block) !important;
+    color: var(--v2p-color-foreground) !important;
+    border: 1px solid var(--v2p-color-border) !important;
+    border-radius: var(--v2p-box-radius) !important;
+}
+html.v2p-theme-dark-default #node_sidebar a,
+:root body.v2p-theme-dark-default #node_sidebar a,
+:root .v2p-theme-dark-default #node_sidebar a,
+:root[data-darkreader-scheme="dark"] body #node_sidebar a,
+:root body:has(#Wrapper.Night) #node_sidebar a {
+    color: var(--v2p-color-foreground) !important;
+}
+.v2p-mobile .content {
+    padding: 0 !important;
+    }
+.v2p-mobile #site-header #site-header-menu #menu-body {
+    border-radius: 14px !important;
+    box-shadow: var(--v2p-widget-shadow);
+    border: 1px solid var(--box-border-color);
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75) !important;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    padding: 6px !important;
+    overflow: hidden;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell a {
+    display: flex !important;
+    align-items: center;
+    padding: 6px 12px !important;
+    margin: 2px 0;
+    border-radius: 10px;
+    font-size: 14px !important;
+    color: var(--v2p-color-font-secondary);
+    transition: background-color 0.15s;
+}
+.v2p-mobile #site-header #site-header-menu #menu-body .cell a:hover {
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.5);
+    color: var(--v2p-color-font-primary);
+}
+.v2p-mobile .v2p-likes-box {
+    vertical-align: middle !important;
+    top:0;
+}
+.v2p-mobile a.dark {
+    font-weight:bold;
+    font-size:12px;
+    }
+.v2p-mobile #site-header #site-header-menu #menu-body a {
+    font-size:14px !important;
+}
+.v2p-mobile #Tabs a {
+    font-size:14px !important;
+    border-radius:999px;
+    margin:2px;
+    }
+.v2p-mobile #search-container {
+    border-radius:18px !important;
+    }
+.v2p-mobile .box .header > h1 {
+    font-size: 16px !important;
+    }
+.v2p-mobile .box .header {
+    font-size: 12px !important;
+    }
+.v2p-mobile a.op, .v2p-mobile a.tag .v2p-mobile .no {
+    border-radius:999px !important;
+    padding:2px 6px;
+    font-size:11px;
+    }
+.v2p-mobile .mll {
+    font-size: 16px;
+}
+
+.v2p-mobile .mll::placeholder {
+    font-size: 16px !important;
+}
+
+.v2p-mobile form table td:first-child {
+    width: 100px !important;
+
+}
+
+
+/* 只把“内容那一格”变成 flex，不影响右边计数 */
+.v2p-mobile .cell.item td:nth-child(3) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* 去掉两块空白行 */
+.v2p-mobile .cell.item td:nth-child(3) > .sep5 {
+    display: none;
+}
+
+/* 主题标题：排第一行，占满整行 */
+.v2p-mobile .cell.item td:nth-child(3) > .item_title {
+    order: 1;
+    width: 100%;
+    display: block;
+    padding:3px 0;
+}
+
+/* 第一行 small fade（节点 + 作者）→ 合并行左侧 */
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:first-of-type {
+    order: 2;
+    display: inline;
+    margin-top:8px;
+}
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:last-of-type {
+    display: none !important;
+}
+/* 第二个 small fade（时间 + 最后回复）→ 合并行右侧 */
+.v2p-mobile .cell.item td:nth-child(3) > span.small.fade:last-of-type {
+    order: 3;
+    display: inline;
+    margin-left: .5em;
+}
+
+
+
+.v2p-mobile #site-header {
+    background-color:transparent !important;
+    border-bottom:none !important;
+    height: 50px;
+    padding:10px;
+    margin:auto;
+    max-width:1000px;
+    }
+.v2p-mobile .box {
+    border-radius: 0 !important;
+    padding:5px 15px !important;
+    margin: 0 0 10px 0;
+
+}
+
+.v2p-mobile .cell.item table tr > td:last-child {
+
+    min-width: 30px !important;
+    vertical-align: top !important;
+}
+
+.v2p-mobile .cell.item table tr > td[width="70"] {
+    width:35px !important;
+}
+.v2p-mobile .item_title {
+font-size:15px;
+}
+.v2p-mobile .topic_content {
+    font-size:15px;
+    line-height:1.5;
+}
+.v2p-mobile #topic-tip-box {
+display:none;
+}
+#reply-box .cell {
+border:none;
+}
+.v2p-mobile #no-comments-yet {
+background-color:var(--v2p-color-bg-content);
+margin: 0 auto 10px auto;
+box-shadow: var(--v2p-box-shadow);
+border:none;
+color: var(--box-foreground-color);
+width:50%;
+align:center;
+}
+.v2p-mobile .avatar {
+    width: 30px !important;
+    max-height: 30px !important;
+    border-radius: 50%;
+    object-fit: cover;
+    overflow: hidden;
+    margin:0;
+}
+.v2p-mobile .cell .avatar {
+    margin-top:5px;
+}
+.v2p-mobile a.node {
+    font-size:11px !important;
+    }
+.v2p-mobile .small a {
+    font-weight:500;
+}
+.v2p-mobile .small {
+    font-size:11px;
+}
+.v2p-mobile small.gray a {
+    font-weight:bold;
+}
+
+.v2p-mobile .v2p-reply-wrap #reply_content {
+    height:110px !important;
+    }
+.v2p-mobile a.count_livid:active, .v2p-mobile a.count_livid:link, a.count_livid:visited {
+    padding: 3px !important;
+    font-size: 10px;
+    font-weight: normal;
+    border-radius: 999px !important;
+    display: inline-flex;          /* 支持自动居中 + 自适应 */
+    align-items: center;           /* 垂直居中 */
+    justify-content: center;       /* 水平居中 */
+    min-width: 10px;               /* 最小宽度，确保初始为圆形 */
+    height: 10px;                  /* 高度固定，这很关键 */
+    padding: 0px;
+    background-color: var(--button-background-color) !important;
+    color: var(--button-foreground-color) !important;
+    }
+
+    /* ==== 移动端 Tabs 横向滚动设置 ==== */
+.v2p-mobile #Main #Tabs,
+.v2p-mobile #Tabs {
+    display: flex;
+    flex-wrap: nowrap;          /* 不换行，所有 tab 在一行 */
+    overflow-x: auto;           /* 横向可滚动 */
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;  /* 惯性滚动 */
+    scrollbar-width: none;      /* Firefox 隐藏滚动条 */
+}
+
+/* WebKit 浏览器隐藏滚动条 */
+.v2p-mobile #Main #Tabs::-webkit-scrollbar,
+.v2p-mobile #Tabs::-webkit-scrollbar {
+    display: none;
+}
+
+/* 每个 Tab 固定为内容宽度，避免被压缩 */
+.v2p-mobile #Tabs .tab,
+.v2p-mobile #Tabs .tab_current {
+    flex: 0 0 auto;
+}
+.v2p-mobile .fr {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px; /* 按钮之间的横向间距，可按需调整 */
+}
+
+/*处理详情页header内容排版 */
+/* 1. 设置父容器为相对定位，作为定位基准 */
+.v2p-mobile .header {
+    position: relative;
+    display: block; /* 确保是块级显示 */
+}
+
+/* 2. 处理头像 (.fr)
+   将其从右上角移除，改为绝对定位到左侧“第二行”的位置 */
+.v2p-mobile .header > .fr {
+    float: none;        /* 取消原有的向右浮动 */
+    position: absolute; /* 绝对定位 */
+    top: 36px;
+    left: 8px;        /* 靠左对齐，数值取决于 header 的 padding */
+    margin: 0;          /* 清除可能存在的 margin */
+}
+
+/* 3. 处理导航链接 (无需特殊 CSS，它们会自动回到第一行左侧)
+   因为头像变成了 absolute，导航链接自然占据了文档流的最开始位置 */
+
+/* 4. 处理标题 (h1)
+   给左侧增加内边距，防止文字叠在头像上，形成“左图右文”效果 */
+.v2p-mobile .header > h1 {
+    margin: 15px 0 0 0;   /* 在导航和标题之间增加间距 */
+    padding-left: 40px; /* 【核心】左侧留白 = 头像宽度(36px) + 间距 */
+    display: block;
+}
+
+/* 5. 处理底部元数据 (small)
+   同样左侧留白，并强制换行显示在标题下方 */
+.v2p-mobile .header > small {
+    display: block;     /* 确保独占一行 */
+    padding-left: 40px; /* 对齐标题 */
+    margin-top: 5px;    /* 微调间距 */
+}
+
+/* 6. 隐藏原有的分割线 (可选，为了布局更紧凑) */
+.v2p-mobile .header > .sep {
+    display: none;
+}
+.v2p-mobile .cell > table > tbody > tr > td:first-child {
+width:30px !important;
+}
+.v2p-mobile #notifications .cell > table > tbody > tr > td:nth-child(2) {
+    padding-left:10px !important;
+}
+.v2p-mobile .v2p-indent {
+    background-color: var(--bg-reply);
+    border-left: 2px solid var(--v2p-color-border-darker);
+    border-top: 1px solid var(--v2p-color-border-darker);
+    --bg-reply: var(--v2p-color-bg-reply);
+    position: relative;
+    z-index: var(--zidx-expand-btn);
+    padding: var(--v2p-tp-nested-pd);
+    border-radius: 10px;
+    margin: 10px 0 0 5px;
+}
+/* 让 svg 图标统一垂直对齐 */
+.v2p-mobile .fr svg {
+  vertical-align: middle !important;
+}
+
+/* 深色模式下反转 Logo 颜色 */
+html.Night #site-header-logo #LogoMobile {
+    filter: invert(1) brightness(1.2) contrast(1.1);
+}
+@media (min-width: 600px) {
+    .v2p-mobile .box {
+        border-radius: 18px !important;
+    }
+}
+
+/* === 主题选择菜单 === */
+.v2p-theme-menu {
+    position: absolute;
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75);
+    border: 1px solid var(--box-border-color);
+    box-shadow: var(--v2p-widget-shadow);
+    border-radius: 14px;
+    padding: 6px;
+    display: none; /* Initially hidden */
+    flex-direction: column;
+    width: 160px;
+    z-index: 2000;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+.v2p-theme-menu.show {
+    display: flex;
+    animation: v2p-fade-in 0.15s ease-out;
+}
+.v2p-theme-menu-item {
+    padding: 10px 12px;
+    margin: 2px 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Gap between icon and label */
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--v2p-color-font-secondary);
+    transition: background-color 0.15s;
+}
+.v2p-theme-menu-item:hover {
+    background-color: rgba(var(--v2p-color-bg-content-rgb), 0.5);
+    color: var(--v2p-color-font-primary);
+}
+.v2p-theme-menu-item.active {
+    color: var(--v2p-color-font-primary);
+    font-weight: 500;
+}
+.v2p-theme-menu-item .icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--v2p-color-accent);
+}
+@keyframes v2p-fade-in {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes v2p-fade-in-up {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+/* 移动端主题菜单向上弹出动画 */
+.v2p-mobile .v2p-theme-menu.show {
+    animation: v2p-fade-in-up 0.15s ease-out;
+}
+`;
+
+    // 尽早注入 CSS
+    if (typeof GM_addStyle !== "undefined") {
+        GM_addStyle(style);
+    } else {
+        // 理论上油猴一定有 GM_addStyle，这里只是兜底
+        const el = document.createElement("style");
+        el.type = "text/css";
+        el.textContent = style;
+        (document.head || document.documentElement).appendChild(el);
+    }
+
+    // ========= 2. 主题模式 & 类名处理 =========
+    // 依次：亮色 → 晨光 → 水色 → 暗色 → 跟随系统
+    const THEME_MODES = ["light", "dawn", "aqua", "dark", "auto"];
+
+    const STORAGE_KEY = "user_preferred_theme_mode";
+    const TOGGLE_SELECTOR = ".v2p-color-mode-toggle";
+
+    // 记录站点原生的 SITE_NIGHT（0: 浅色, 1: 深色）
+    let nativeNight = null;
+
+    // 检测当前页原生的深色 / 浅色状态：
+    // 1) 优先用第一个 IIFE 写入的 window.__V2P_NATIVE_NIGHT__
+    // 2) 其次看 <link> 里是 tomorrow.css 还是 tomorrow-night.css
+    // 3) 再不行就扫一遍 <script> 里的 SITE_NIGHT
+    function detectNativeNight() {
+        if (nativeNight !== null) return nativeNight;
+
+        // 0. 如果前面的 MutationObserver 已经写好了，就直接用
         if (
-          confirm(
-            `\u786E\u8BA4\u82B1\u8D39 10 \u4E2A\u94DC\u5E01\u5411 @${memberName} \u7684\u8FD9\u6761\u56DE\u590D\u53D1\u9001\u611F\u8C22\uFF1F`,
-          )
+            typeof window !== "undefined" &&
+            typeof window.__V2P_NATIVE_NIGHT__ === "number"
         ) {
-          const replyId = id.split("_").at(1);
-          if (replyId) {
-            void thankReply({
-              replyId,
-              onSuccess: () => {
-                const $cell = $(`.cell[id="r_${replyId}"]`);
-                const $tableInCell = $cell.find("> table");
-                const $likesBox = $tableInCell.find(".v2p-likes-box");
-                const $firstLikesBox = $likesBox.eq(0);
-                const likes = Number($firstLikesBox.text());
-                const $clonedIconHeart = $firstLikesBox
-                  .find(".v2p-icon-heart")
-                  .clone();
-                if (likes > 0) {
-                  $likesBox
-                    .addClass("v2p-thanked")
-                    .empty()
-                    .append($clonedIconHeart, ` ${likes + 1}`);
-                } else {
-                  $(`
-                      <span class="small v2p-likes-box v2p-thanked" style="position:relative;top:-1px;">
-                        &nbsp;&nbsp;<span class="v2p-icon-heart"><i data-lucide="heart"></i></span>1
-                      </span>
-                      `).insertAfter($tableInCell.find(".ago"));
-                  loadIcons();
-                }
-                const $thankAction = $tableInCell.find(".v2p-control-thank");
-                $thankAction.addClass("v2p-thanked").off("click");
-                $thankAction.siblings().has(".v2p-control-hide").hide();
-              },
-              onFail: () => {
-                createToast({
-                  message: "\u274C \u611F\u8C22\u56DE\u590D\u5931\u8D25",
-                });
-              },
-            });
-          }
-        }
-      }
-    });
-  }
-  handleNestedComment({ options, $commentCells, commentDataList });
-  {
-    const $opAvatar = $topicHeader.find(".avatar");
-    const $opName = $topicHeader.find('.gray a[href^="/member"]');
-    const memberName = $opAvatar.prop("alt");
-    const memberAvatar = $opAvatar.prop("src");
-    const memberLink = $topicHeader.find(".fr > a").prop("href");
-    if (
-      typeof memberName === "string" &&
-      typeof memberAvatar === "string" &&
-      typeof memberLink === "string"
-    ) {
-      processAvatar({
-        $trigger: $opAvatar,
-        popupControl,
-        commentData: { memberName, memberAvatar, memberLink },
-        openInNewTab: options.openInNewTab,
-      });
-      processAvatar({
-        $trigger: $opName,
-        popupControl,
-        commentData: { memberName, memberAvatar, memberLink },
-        shouldWrap: false,
-        openInNewTab: options.openInNewTab,
-      });
-      fetchUserInfo(memberName).then((memberData) => {
-        const registerDays = getRegisterDays(memberData.created);
-        memberDataCache.set(memberName, { ...memberData, registerDays });
-        if (registerDays <= 30) {
-          $opName.append(
-            `<span class="v2p-register-days">${registerDays <= 15 ? "15" : "30"} \u5929\u5185\u6CE8\u518C</span>`,
-          );
-        }
-      });
-    }
-  }
-  if (options.replyContent.showImgInPage) {
-    window.requestIdleCallback(() => {
-      handleTopicImg();
-    });
-  }
-  window.requestIdleCallback(() => {
-    replaceCommentEmojiWithHD();
-  });
-}
-var commentDataList, popupControl;
-var init_comment = __esm({
-  "src/contents/topic/comment.ts"() {
-    "use strict";
-    init_lucide();
-    init_modal();
-    init_popup();
-    init_toast();
-    init_constants();
-    init_services();
-    init_utils();
-    init_dom();
-    init_globals();
-    init_helpers();
-    init_avatar();
-    init_content();
-    commentDataList = [];
-    popupControl = createPopup({
-      root: $wrapper,
-      triggerType: "hover",
-      placement: "right-start",
-      offsetOptions: { mainAxis: 8, crossAxis: -4 },
-    });
-  },
-});
-
-var $layoutToggle,
-  iconLayoutV,
-  iconLayoutH,
-  switchToHorizontalLayout,
-  switchToVerticalLayout;
-var init_layout = __esm({
-  "src/contents/topic/layout.ts"() {
-    "use strict";
-    init_lucide();
-    init_constants();
-    init_utils();
-    init_globals();
-    iconLayoutV = createElement$1(PanelTop);
-    iconLayoutV.setAttribute("width", "100%");
-    iconLayoutV.setAttribute("height", "100%");
-    iconLayoutH = createElement$1(PanelRight);
-    iconLayoutH.setAttribute("width", "100%");
-    iconLayoutH.setAttribute("height", "100%");
-  },
-});
-
-// src/contents/topic/paging.ts
-function handlePaging() {
-  const $notCommentCells = $commentBox.find('> .cell:not([id^="r_"])');
-  if ($notCommentCells.length <= 1) {
-    return;
-  }
-  const pagingCells = $notCommentCells.slice(1).addClass("v2p-paging");
-  const pageBtns = pagingCells.find(".super.button");
-  pageBtns.eq(0).addClass("v2p-prev-btn");
-  pageBtns.eq(1).addClass("v2p-next-btn");
-}
-var init_paging = __esm({
-  "src/contents/topic/paging.ts"() {
-    "use strict";
-    init_globals();
-  },
-});
-
-// src/components/image-upload.ts
-function bindImageUpload(props) {
-  const { $wrapper: $wrapper2, $input, insertText, replaceText } = props;
-  const $uploadBar = $(`<div class="v2p-reply-upload-bar">${uploadTip}</div>`);
-  const handleUploadImage = (file) => {
-    const placeholder = "[\u4E0A\u4F20\u56FE\u7247\u4E2D...]";
-    insertText(` ${placeholder} `);
-    $uploadBar
-      .addClass("v2p-reply-upload-bar-disabled")
-      .text("\u6B63\u5728\u4E0A\u4F20\u56FE\u7247...");
-    uploadImage(file)
-      .then((imgLink) => {
-        replaceText(placeholder, imgLink);
-      })
-      .catch(() => {
-        replaceText(placeholder, "");
-        window.alert(
-          "\u274C \u4E0A\u4F20\u56FE\u7247\u5931\u8D25\uFF0C\u8BF7\u6253\u5F00\u63A7\u5236\u53F0\u67E5\u770B\u539F\u56E0",
-        );
-      })
-      .finally(() => {
-        $uploadBar.removeClass("v2p-reply-upload-bar-disabled").text(uploadTip);
-      });
-  };
-  const handleClickUploadImage = () => {
-    const imgInput = document.createElement("input");
-    imgInput.style.display = "none";
-    imgInput.type = "file";
-    imgInput.accept = "image/*";
-    imgInput.addEventListener("change", () => {
-      const selectedFile = imgInput.files?.[0];
-      if (selectedFile) {
-        handleUploadImage(selectedFile);
-      }
-    });
-    imgInput.click();
-  };
-  document.addEventListener("paste", (ev) => {
-    if (!(ev instanceof ClipboardEvent)) {
-      return;
-    }
-    if ($input && !$input.get(0)?.matches(":focus")) {
-      return;
-    }
-    const items = ev.clipboardData?.items;
-    if (!items) {
-      return;
-    }
-    const imageItem = Array.from(items).find((item) =>
-      item.type.includes("image"),
-    );
-    if (imageItem) {
-      ev.preventDefault();
-      const file = imageItem.getAsFile();
-      if (file) {
-        handleUploadImage(file);
-      }
-    }
-  });
-  $wrapper2.get(0)?.addEventListener("drop", (ev) => {
-    ev.preventDefault();
-    if (!(ev instanceof DragEvent)) {
-      return;
-    }
-    const file = ev.dataTransfer?.files[0];
-    if (file) {
-      handleUploadImage(file);
-    }
-  });
-  $(".flex-one-row:last-of-type > .gray").text("");
-  $uploadBar.on("click", () => {
-    if (!$uploadBar.hasClass("v2p-reply-upload-bar-disabled")) {
-      handleClickUploadImage();
-    }
-  });
-  $wrapper2.append($uploadBar);
-  return {
-    uploadBar: $uploadBar,
-  };
-}
-var uploadTip;
-var init_image_upload = __esm({
-  "src/components/image-upload.ts"() {
-    "use strict";
-    init_services();
-    uploadTip =
-      "\u9009\u62E9\u3001\u7C98\u8D34\u3001\u62D6\u653E\u4E0A\u4F20\u56FE\u7247\u3002";
-  },
-});
-
-// src/contents/topic/reply.ts
-function handleReplyActions() {
-  const os = getOS();
-  const isMac = navigator.userAgent.includes("Mac OS");
-  const replyBtnText = `回复<kbd>${isMac ? "Cmd" : "Ctrl"}+Enter</kbd>`;
-
-  const $replyBtn = createButton({
-    children: replyBtnText,
-    type: "submit",
-  }).replaceAll($replyBox.find('input[type="submit"]'));
-  $replyForm.on("submit", () => {
-    const replyVal = $replyTextArea.val();
-    if (typeof replyVal === "string") {
-      $replyTextArea.val(transformEmoji(replyVal));
-    }
-    $replyBtn.text("\u63D0\u4EA4\u56DE\u590D\u4E2D...").prop("disabled", true);
-    setTimeout(() => {
-      $replyBtn.html(replyBtnText).prop("disabled", false);
-    }, 5e3);
-  });
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      $replyForm.trigger("submit");
-    }
-  });
-  {
-    const emoticonGroup = $('<div class="v2p-emoji-group">');
-    const emoticonList = $('<div class="v2p-emoji-list">');
-    const emoticonSpan = $('<span class="v2p-emoji">');
-    const groups = emoticons.map((emojiGroup) => {
-      const group = emoticonGroup.clone();
-      const list = emoticonList.clone();
-      group.append(`<div class="v2p-emoji-title">${emojiGroup.title}</div>`);
-      list.append(
-        emojiGroup.list.map((emoji) => {
-          const emoticon = emoticonSpan.clone();
-          if (emojiGroup.title === "\u6D41\u884C") {
-            const emojiLink = emojiLinks[emoji].hd;
-            emoticon.html(`<img src="${emojiLink}" />`).prop("title", emoji);
-          } else {
-            emoticon.text(emoji);
-          }
-          emoticon.on("click", () => {
-            insertTextToReplyInput(emoji);
-          });
-          return emoticon;
-        }),
-      );
-      group.append(list);
-      return group;
-    });
-    const emoticonsBox = $('<div class="v2p-emoticons-box">').append(groups);
-    const $emojiBtn = createButton({
-      children:
-        '<span style="width:18px; height:18px;"><i data-lucide="smile"></i></span>',
-    }).insertAfter($replyBtn);
-    const $emojiContent = $('<div class="v2p-emoji-container">')
-      .append(emoticonsBox)
-      .appendTo($replyBox)
-      .on("click", () => {
-        focusReplyInput();
-      });
-    const keyupHandler = (ev) => {
-      if (ev.key === "Escape") {
-        ev.preventDefault();
-        emojiPopup.close();
-      }
-    };
-    $emojiBtn.on("click", () => {
-      focusReplyInput();
-    });
-    const emojiPopup = createPopup({
-      root: $replyBox,
-      trigger: $emojiBtn,
-      content: $emojiContent,
-      options: {
-        placement: $body.hasClass("v2p-mobile") ? "bottom" : "right-end",
-      },
-      onOpen: () => {
-        $body.on("keydown", keyupHandler);
-      },
-      onClose: () => {
-        $body.off("keydown", keyupHandler);
-      },
-    });
-  }
-  {
-    $replyBox
-      .find("#undock-button, #undock-button + a")
-      .addClass("v2p-hover-btn")
-      .css("padding", "5px 4px");
-  }
-}
-function handleReply() {
-  $replyTextArea
-    .attr(
-      "placeholder",
-      "\u7559\u4E0B\u5BF9\u4ED6\u4EBA\u6709\u5E2E\u52A9\u7684\u56DE\u590D",
-    )
-    .wrap('<div class="v2p-reply-wrap">');
-  const $replyWrap = $(".v2p-reply-wrap");
-  const $replyPreview = $('<div class="v2p-reply-preview">');
-  $replyPreview.hide().insertAfter($replyWrap);
-  bindImageUpload({
-    $wrapper: $replyWrap,
-    $input: $replyTextArea,
-    insertText: (text) => {
-      insertTextToReplyInput(text);
-    },
-    replaceText: (find, replace) => {
-      const val = $replyTextArea.val();
-      if (typeof val === "string") {
-        const newVal = val.replace(find, replace);
-        $replyTextArea.val(newVal).trigger("focus");
-      }
-    },
-  });
-  {
-    const $replyTabs = $('<div class="v2p-reply-tabs">');
-    const $replyTabEdit = $(
-      '<div class="v2p-reply-tab active">\u7F16\u8F91</div>',
-    );
-    const $replyTabPreview = $('<div class="v2p-reply-tab">\u9884\u89C8</div>');
-    $replyTabEdit
-      .on("click", () => {
-        $replyTabEdit.addClass("active");
-        $replyTabPreview.removeClass("active");
-        $replyWrap.show();
-        $replyPreview.hide();
-      })
-      .appendTo($replyTabs);
-    let lastPreviewText = null;
-    $replyTabPreview
-      .on("click", () => {
-        if (!$replyTabPreview.hasClass("active")) {
-          $replyTabPreview.addClass("active");
-          $replyTabEdit.removeClass("active");
-          const replyText = $replyTextArea.val();
-          if (typeof replyText === "string") {
-            $replyWrap.hide();
-            $replyPreview.show();
-            if (replyText.trim() === "") {
-              $replyPreview.html(
-                "\u6CA1\u6709\u53EF\u9884\u89C8\u7684\u5185\u5BB9",
-              );
-            } else {
-              const textToPreview = transformEmoji(replyText);
-              const handlePreview = async () => {
-                $replyPreview.html("\u6B63\u5728\u52A0\u8F7D\u9884\u89C8...");
-                try {
-                  const renderedContent = await getCommentPreview({
-                    text: textToPreview,
-                    syntax: "default",
-                  });
-                  $replyPreview.html(renderedContent);
-                  replaceEmojiWithHD($replyPreview.find(".embedded_image"));
-                  lastPreviewText = textToPreview;
-                } catch {
-                  $replyPreview.html(
-                    '\u9884\u89C8\u5931\u8D25\uFF0C<a class="v2p-preview-retry">\u70B9\u51FB\u91CD\u8BD5</a>\u3002',
-                  );
-                  $replyPreview.find(".v2p-preview-retry").on("click", () => {
-                    void handlePreview();
-                  });
-                }
-              };
-              if (replyText !== lastPreviewText) {
-                void handlePreview();
-              }
-            }
-          }
-        }
-      })
-      .appendTo($replyTabs);
-    $replyBox
-      .find("> .cell:first-of-type > div:first-of-type")
-      .replaceWith($replyTabs);
-  }
-  $(".flex-one-row:last-of-type > .gray").text("");
-  handleReplyActions();
-}
-var init_reply = __esm({
-  "src/contents/topic/reply.ts"() {
-    "use strict";
-    init_button();
-    init_image_upload();
-    init_popup();
-    init_constants();
-    init_services();
-    init_utils();
-    init_globals();
-    init_helpers();
-  },
-});
-
-// src/contents/topic/tool.ts
-function handleTools() {
-  const storage = getStorageSync();
-  const options = storage["options" /* Options */];
-  const $tools = $(`
-    <div class="cell v2p-tools">
-      <span class="v2p-tool v2p-hover-btn v2p-tool-reply">
-        <span class="v2p-tool-icon"><i data-lucide="message-square-plus"></i></span>\u56DE\u590D\u4E3B\u9898
-      </span>
-      <span class="v2p-tool v2p-hover-btn v2p-tool-scroll-top">
-        <span class="v2p-tool-icon"><i data-lucide="chevrons-up"></i></span>\u56DE\u5230\u9876\u90E8
-      </span>
-      <span class="v2p-tool v2p-hover-btn v2p-tool-more">
-        <span class="v2p-tool-icon"><i data-lucide="package-plus"></i></span>\u66F4\u591A\u529F\u80FD
-      </span>
-    </div>
-  `);
-  $tools.find(".v2p-tool-reply").on("click", () => {
-    $replyTextArea.trigger("focus");
-  });
-
-  $tools.find(".v2p-tool-scroll-top").on("click", () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-  {
-    const $moreTool = $tools.find(".v2p-tool-more");
-    const $toolContent = $(`
-      <div class="v2p-select-dropdown">
-        <div class="v2p-select-item v2p-reply-tool-decode">\u89E3\u6790\u672C\u9875 Base64</div>
-        <div class="v2p-select-item v2p-reply-tool-encode">\u6587\u672C\u8F6C Base64</div>
-      </div>
-    `);
-    const toolsPopup = createPopup({
-      root: $replyBox,
-      trigger: $moreTool,
-      content: $toolContent,
-      offsetOptions: { mainAxis: 5, crossAxis: -5 },
-    });
-    $toolContent.find(".v2p-reply-tool-decode").on("click", () => {
-      decodeBase64TopicPage();
-    });
-    $toolContent.find(".v2p-reply-tool-encode").on("click", () => {
-      focusReplyInput();
-      setTimeout(() => {
-        const inputText = window.prompt(
-          "\u8F93\u5165\u8981\u52A0\u5BC6\u7684\u5B57\u7B26\u4E32\uFF0C\u5B8C\u6210\u540E\u5C06\u586B\u5199\u5230\u56DE\u590D\u6846\u4E2D\uFF1A",
-        );
-        if (inputText) {
-          let encodedText;
-          try {
-            encodedText = window.btoa(encodeURIComponent(inputText));
-          } catch (err) {
-            const errorTip =
-              "\u8BE5\u6587\u672C\u65E0\u6CD5\u7F16\u7801\u4E3A Base64";
-            console.error(
-              err,
-              `${errorTip}\uFF0C\u53EF\u80FD\u7684\u9519\u8BEF\u539F\u56E0\uFF1A\u6587\u672C\u5305\u542B\u4E2D\u6587\u3002`,
-            );
-            createToast({ message: errorTip });
-          }
-          if (encodedText) {
-            insertTextToReplyInput(encodedText);
-          }
-        }
-      });
-    });
-
-    const canHideRefName =
-      options.nestedReply.display === "indent" &&
-      !!options.replyContent.hideRefName;
-    if (canHideRefName) {
-      let isHidden = options.replyContent.hideRefName;
-      const $toolToggleDisplay = $(
-        '<div class="v2p-select-item">\u663E\u793A @ \u7528\u6237\u540D</div>',
-      );
-      $toolToggleDisplay.on("click", () => {
-        if (isHidden) {
-          isHidden = false;
-          $toolToggleDisplay.text("\u9690\u85CF @ \u7528\u6237\u540D");
-          $(".v2p-member-ref").addClass("v2p-member-ref-show");
-        } else {
-          isHidden = true;
-          $toolToggleDisplay.text("\u663E\u793A @ \u7528\u6237\u540D");
-          $(".v2p-member-ref").removeClass("v2p-member-ref-show");
-        }
-      });
-      $toolContent.prepend($toolToggleDisplay);
-    }
-    const $toolToggleLayout = $(
-      `
-      <div class="v2p-select-item v2p-reply-tool-layout">
-        ${options.reply.layout === "horizontal" ? "\u5207\u6362\u4E3A\u5782\u76F4\u5E03\u5C40" : "\u5207\u6362\u4E3A\u6C34\u5E73\u5E03\u5C40"}
-      </div>
-      `,
-    );
-    $toolContent.find(".v2p-select-item").on("click", () => {
-      toolsPopup.close();
-    });
-  }
-  $infoCard.addClass("v2p-tool-box").append($tools);
-  loadIcons();
-}
-var init_tool = __esm({
-  "src/contents/topic/tool.ts"() {
-    "use strict";
-    init_popup();
-    init_toast();
-    init_constants();
-    init_utils();
-    init_globals();
-    init_helpers();
-    init_layout();
-  },
-});
-
-// src/contents/topic/index.ts
-var topic_exports = {};
-var init_topic = __esm({
-  "src/contents/topic/index.ts"() {
-    "use strict";
-    init_constants();
-    init_utils();
-    init_globals();
-    init_helpers();
-    init_comment();
-    init_content();
-    init_layout();
-    init_paging();
-    init_reply();
-    init_tool();
-    void (async () => {
-      const storage = await getStorage();
-      const options = storage["options" /* Options */];
-      if (options.openInNewTab) {
-        $topicHeader.find('a[href^="/member/"]').prop("target", "_blank");
-        $commentTableRows
-          .find("> td:nth-child(3) > strong > a")
-          .prop("target", "_blank");
-      }
-      handleTools();
-      {
-        $(document).on("keydown", (ev) => {
-          if (!ev.isDefaultPrevented()) {
-            if (ev.key === "Escape") {
-              const $replyContent = $("#reply_content");
-              if ($replyBox.hasClass("reply-box-sticky")) {
-                $replyBox.removeClass("reply-box-sticky");
-                $("#undock-button").css("display", "none");
-              }
-              $replyContent.trigger("blur");
-            }
-          }
-        });
-      }
-      handleContent();
-      if (document.referrer !== "") {
-        if (document.referrer.includes(document.location.pathname)) {
-          const url = new URL(document.location.href);
-          const page = url.searchParams.get("p");
-          if (page && page !== "1") {
-            document
-              .querySelector(".topic_buttons")
-              ?.scrollIntoView({ behavior: "smooth" });
-          }
-        }
-      }
-      handlePaging();
-
-      try {
-        await handleComments();
-      } catch (e) {
-        console.error("handleComments 出错，已跳过：", e);
-      }
-
-      handleReply();
-      loadIcons();
-
-      {
-        const isFlamewarNode = $topicHeader
-          .find('a[href^="/go"]')
-          .attr("href")
-          ?.endsWith("/flamewar");
-        if (isFlamewarNode) {
-          $("#node_sidebar").addClass("v2p-node-sidebar-flamewar");
-        }
-      }
-    })();
-  },
-});
-
-// src/contents/write/write.ts
-function handleWrite() {
-  bindImageUpload({
-    $wrapper: $("#workspace"),
-    insertText: (text) => {
-      postTask(`editor.getDoc().replaceRange("${text}", editor.getCursor())`);
-    },
-    replaceText: (find, replace) => {
-      if (replace) {
-        const mode = $("input[name=syntax]:checked").val();
-        if (mode === "markdown") {
-          replace = `![](${replace})`;
-        }
-      }
-      postTask(`
-      editor.setValue(editor.getValue().replace("${find}", "${replace}"));
-      const doc = editor.getDoc();
-      const lastLine = doc.lastLine();
-      const lastChar = doc.getLine(lastLine).length;
-      doc.setCursor({ line: doc.lastLine(), ch: lastChar });
-      `);
-    },
-  });
-}
-var init_write = __esm({
-  "src/contents/write/write.ts"() {
-    "use strict";
-    init_image_upload();
-    init_helpers();
-  },
-});
-
-// src/contents/write/index.ts
-var write_exports = {};
-var init_write2 = __esm({
-  "src/contents/write/index.ts"() {
-    "use strict";
-    init_helpers();
-    init_write();
-    handleWrite();
-    loadIcons();
-  },
-});
-
-// node_modules/.pnpm/webext-patterns@1.5.0/node_modules/webext-patterns/index.js
-var patternValidationRegex =
-  /^(https?|wss?|file|ftp|\*):\/\/(\*|\*\.[^*/]+|[^*/]+)\/.*$|^file:\/\/\/.*$|^resource:\/\/(\*|\*\.[^*/]+|[^*/]+)\/.*$|^about:/;
-var isFirefox = globalThis.navigator?.userAgent.includes("Firefox/");
-var allStarsRegex = isFirefox
-  ? /^(https?|wss?):[/][/][^/]+([/].*)?$/
-  : /^https?:[/][/][^/]+([/].*)?$/;
-var allUrlsRegex = /^(https?|file|ftp):[/]+/;
-function assertValidPattern(matchPattern) {
-  if (!isValidPattern(matchPattern)) {
-    throw new Error(
-      matchPattern +
-        " is an invalid pattern. See https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns for more info.",
-    );
-  }
-}
-function isValidPattern(matchPattern) {
-  return (
-    matchPattern === "<all_urls>" || patternValidationRegex.test(matchPattern)
-  );
-}
-function getRawPatternRegex(matchPattern) {
-  assertValidPattern(matchPattern);
-  let [, protocol, host = "", pathname] = matchPattern.split(
-    /(^[^:]+:[/][/])([^/]+)?/,
-  );
-  protocol = protocol
-    .replace("*", isFirefox ? "(https?|wss?)" : "https?")
-    .replaceAll(/[/]/g, "[/]");
-  if (host === "*") {
-    host = "[^/]+";
-  }
-  host &&= host
-    .replace(/^[*][.]/, "([^/]+.)*")
-    .replaceAll(/[.]/g, "[.]")
-    .replace(/[*]$/, "[^.]+");
-  pathname = pathname
-    .replaceAll(/[/]/g, "[/]")
-    .replaceAll(/[.]/g, "[.]")
-    .replaceAll(/[*]/g, ".*");
-  return "^" + protocol + host + "(" + pathname + ")?$";
-}
-function patternToRegex(...matchPatterns) {
-  if (matchPatterns.length === 0) {
-    return /$./;
-  }
-  if (matchPatterns.includes("<all_urls>")) {
-    return allUrlsRegex;
-  }
-  if (matchPatterns.includes("*://*/*")) {
-    return allStarsRegex;
-  }
-  return new RegExp(matchPatterns.map((x) => getRawPatternRegex(x)).join("|"));
-}
-
-// src/user-scripts/index.ts
-function runAfterLoaded(fn) {
-  if (document.readyState !== "loading") {
-    fn();
-  } else {
-    document.addEventListener("DOMContentLoaded", () => {
-      fn();
-    });
-  }
-}
-
-var allowedHosts = [
-  "https://v2ex.com",
-  "https://www.v2ex.com",
-  "https://cn.v2ex.com",
-  "https://jp.v2ex.com",
-  "https://de.v2ex.com",
-  "https://us.v2ex.com",
-  "https://hk.v2ex.com",
-  "https://global.v2ex.com",
-  "https://fast.v2ex.com",
-  "https://s.v2ex.com",
-  "https://origin.v2ex.com",
-  "https://staging.v2ex.com",
-];
-var commonRegex = patternToRegex(...allowedHosts.map((host) => `${host}/*`));
-var topicRegex = patternToRegex(...allowedHosts.map((host) => `${host}/t/*`));
-var writeRegex = patternToRegex(
-  ...allowedHosts.map((host) => `${host}/write/*`),
-);
-runAfterLoaded(() => {
-  const url = window.location.href;
-  void (async () => {
-    if (commonRegex.test(url)) {
-      await Promise.resolve().then(() => (init_common(), common_exports));
-      await Promise.resolve().then(() => (init_home(), home_exports));
-    }
-    if (topicRegex.test(url)) {
-      await Promise.resolve().then(() => (init_topic(), topic_exports));
-    }
-    if (writeRegex.test(url)) {
-      await Promise.resolve().then(() => (init_write2(), write_exports));
-    }
-  })();
-});
-
-// v2p: replace legacy heart/reply icons with SVG controls
-(function () {
-  "use strict";
-  const docEl = document.documentElement;
-  if (docEl) docEl.classList.add("v2p-topnav-pending");
-
-  // 统一图标尺寸 & 描边粗细
-  const ICON_SIZE = 14; // 图标像素大小：18x18，你可以改成 16 / 20 等
-  const STROKE_WIDTH = 2; // 描边粗细
-  const ICON_OPACITY = 0.4; // 60% 不透明度
-
-  function createSvgHeart() {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("xmlns", svgNS);
-    svg.setAttribute("width", ICON_SIZE);
-    svg.setAttribute("height", ICON_SIZE);
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", STROKE_WIDTH);
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("data-lucide", "heart");
-    svg.setAttribute("class", "lucide lucide-heart");
-    svg.style.opacity = String(ICON_OPACITY);
-
-    const path = document.createElementNS(svgNS, "path");
-    path.setAttribute(
-      "d",
-      "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
-    );
-    svg.appendChild(path);
-
-    return svg;
-  }
-
-  function createSvgReply() {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("xmlns", svgNS);
-    svg.setAttribute("width", ICON_SIZE);
-    svg.setAttribute("height", ICON_SIZE);
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", STROKE_WIDTH);
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("data-lucide", "message-square");
-    svg.setAttribute("class", "lucide lucide-message-square");
-    svg.style.opacity = String(ICON_OPACITY);
-
-    const path = document.createElementNS(svgNS, "path");
-    path.setAttribute(
-      "d",
-      "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-    );
-    svg.appendChild(path);
-
-    return svg;
-  }
-
-  function replaceIcons(root) {
-    const doc = root || document;
-    const createOpIcon = (path, viewBox = "0 0 24 24") => {
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("xmlns", svgNS);
-      svg.setAttribute("width", "14");
-      svg.setAttribute("height", "14");
-      svg.setAttribute("viewBox", viewBox);
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.innerHTML = path;
-      return svg;
-    };
-
-    // 1. 替换感谢小红心 heart_neue.png
-    doc.querySelectorAll('img[src*="heart_neue.png"]').forEach((img) => {
-      const a = img.closest("a");
-      if (!a) return;
-
-      if (a.dataset.v2pSvgReplaced === "heart") return;
-      a.dataset.v2pSvgReplaced = "heart";
-
-      const svg = createSvgHeart();
-      // 如果需要，可以保持原来的 vertical-align
-      svg.style.verticalAlign = img.style.verticalAlign || "middle";
-
-      img.replaceWith(svg);
-    });
-
-    // 1.5 替换创作图标 compose.png
-    doc.querySelectorAll('img[src*="compose.png"]').forEach((img) => {
-      const a = img.closest("a");
-      if (!a) return;
-
-      if (a.dataset.v2pSvgReplaced === "compose") return;
-      a.dataset.v2pSvgReplaced = "compose";
-
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("xmlns", svgNS);
-      svg.setAttribute("width", "20");
-      svg.setAttribute("height", "20");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("class", "lucide lucide-file-plus");
-
-      svg.innerHTML =
-        '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="12" x2="12" y1="12" y2="18"/><line x1="9" x2="15" y1="15" y2="15"/>';
-
-      img.replaceWith(svg);
-
-      // 移除后面那个宽 10 的空 td
-      const td = a.closest("td");
-      if (td && td.nextElementSibling) {
-        const nextTd = td.nextElementSibling;
-        if (nextTd.tagName === "TD" && nextTd.getAttribute("width") === "10") {
-          nextTd.remove();
-        }
-      }
-    });
-
-    // 2. 替换回复图标 reply_neue.png
-    doc.querySelectorAll('img[src*="reply_neue.png"]').forEach((img) => {
-      const a = img.closest("a");
-      if (!a) return;
-
-      if (a.dataset.v2pSvgReplaced === "reply") return;
-      a.dataset.v2pSvgReplaced = "reply";
-
-      const svg = createSvgReply();
-      svg.style.verticalAlign = img.style.verticalAlign || "middle";
-
-      img.replaceWith(svg);
-    });
-
-    // 2.5 替换余额区域金银铜图标
-    const balanceIcons = [
-      { src: "gold@2x.png", color: "#FFD700" }, // 金色
-      { src: "silver@2x.png", color: "#C0C0C0" }, // 银色
-      { src: "bronze@2x.png", color: "#CD7F32" }, // 铜色
-    ];
-
-    balanceIcons.forEach(({ src, color }) => {
-      doc.querySelectorAll(`img[src*="${src}"]`).forEach((img) => {
-        if (img.dataset.v2pSvgReplaced) return;
-        img.dataset.v2pSvgReplaced = "balance";
-
-        const svgNS = "http://www.w3.org/2000/svg";
-        const svg = document.createElementNS(svgNS, "svg");
-        svg.setAttribute("xmlns", svgNS);
-        svg.setAttribute("width", "16");
-        svg.setAttribute("height", "16");
-        svg.setAttribute("viewBox", "0 0 24 24");
-        svg.setAttribute("fill", color);
-        svg.setAttribute("stroke", color);
-        svg.setAttribute("stroke-width", "2");
-        svg.setAttribute("stroke-linecap", "round");
-        svg.setAttribute("stroke-linejoin", "round");
-        svg.setAttribute("class", "lucide lucide-circle-dot");
-        svg.style.verticalAlign = "middle";
-
-        // circle-dot 图标路径
-        svg.innerHTML =
-          '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1" fill="white" stroke="white"/>';
-
-        img.replaceWith(svg);
-      });
-    });
-
-    // 2.5 顶部导航图标 (首页, 用户名, 记事本, Planet, 设置, 登出)
-    const topNavLinks = document.querySelectorAll("#Top .tools > a.top");
-    if (topNavLinks.length > 0) {
-      topNavLinks.forEach((a) => {
-        if (a.dataset.v2pSvgReplaced) return;
-
-        const text = a.textContent.trim();
-        const href = a.getAttribute("href");
-        let icon = null;
-        let content = null;
-
-        if (text === "首页" || href === "/") {
-          icon = "house";
-          content =
-            '<path d="M15 21v-8a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
-        } else if (href && href.startsWith("/member/")) {
-          icon = "user";
-          content =
-            '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>';
-        } else if (text === "记事本" || href === "/notes") {
-          icon = "file-text";
-          content =
-            '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/>';
-        } else if (text === "Planet" || href === "/planet") {
-          icon = "globe";
-          content =
-            '<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" x2="22" y1="12" y2="12"/>';
-        } else if (text === "设置" || href === "/settings") {
-          icon = "settings";
-          content =
-            '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
-        } else if (text === "登出" || href.includes("signout")) {
-          icon = "log-out";
-          content =
-            '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>';
+            nativeNight = window.__V2P_NATIVE_NIGHT__;
+            return nativeNight;
         }
 
-        if (icon && content) {
-          a.dataset.v2pSvgReplaced = icon;
-          const svgNS = "http://www.w3.org/2000/svg";
-          const svg = document.createElementNS(svgNS, "svg");
-          svg.setAttribute("xmlns", svgNS);
-          svg.setAttribute("width", "15");
-          svg.setAttribute("height", "15");
-          svg.setAttribute("viewBox", "0 0 24 24");
-          svg.setAttribute("fill", "none");
-          svg.setAttribute("stroke", "currentColor");
-          svg.setAttribute("stroke-width", "2");
-          svg.setAttribute("stroke-linecap", "round");
-          svg.setAttribute("stroke-linejoin", "round");
-          svg.setAttribute("class", `lucide lucide-${icon}`);
-          svg.style.marginRight = "5px";
-          svg.style.verticalAlign = "text-bottom";
-
-          svg.innerHTML = content;
-          a.prepend(svg);
-        }
-      });
-    }
-    if (docEl) {
-      const ready =
-        topNavLinks.length === 0 ||
-        Array.from(topNavLinks).every(
-          (a) =>
-            a.dataset.v2pSvgReplaced ||
-            a.getAttribute("data-v2p-svg-replaced") ||
-            a.querySelector("svg"),
-        );
-      if (ready) docEl.classList.remove("v2p-topnav-pending");
-    }
-
-    // 2.6 主题页操作按钮图标化（收藏 / Tweet / Share / 忽略 / 感谢）
-    const opLinks = doc.querySelectorAll(
-      "#Wrapper .content .box .inner .fr a.op",
-    );
-    if (opLinks.length > 0) {
-      opLinks.forEach((a) => {
-        if (a.dataset.v2pOpIcon) return;
-        const text = (a.textContent || "").trim();
-        let iconPath = null;
-        if (text.includes("加入收藏") || text === "收藏") {
-          iconPath =
-            '<path d="M12 2l2.9 6.1L22 9l-5 4.9L18.2 22 12 18.6 5.8 22 7 13.9 2 9l7.1-.9z"/>';
-        } else if (text === "Tweet") {
-          iconPath =
-            '<path d="M23 3a10.9 10.9 0 0 1-3.14 1.53A4.48 4.48 0 0 0 12.1 8v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"/>';
-        } else if (text === "Share") {
-          iconPath =
-            '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>';
-        } else if (text.includes("忽略主题")) {
-          iconPath =
-            '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-5 0-9.27-3.11-11-8 1.21-3.08 3.62-5.39 6.69-6.56"/><path d="M1 1l22 22"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8a10.94 10.94 0 0 1-4.29 5.3"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/>';
-        } else if (text === "感谢") {
-          iconPath =
-            '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 22l7.8-8.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>';
-        }
-        if (!iconPath) return;
-        a.dataset.v2pOpIcon = "1";
-        a.classList.add("v2p-op-icon");
-        a.setAttribute("title", text);
-        a.setAttribute("aria-label", text);
-        a.textContent = "";
-        a.appendChild(createOpIcon(iconPath));
-      });
-
-      // 清理 #Main 内 op 旁的 &nbsp; 文本节点
-      doc.querySelectorAll("#Main .fr").forEach((container) => {
-        Array.from(container.childNodes).forEach((node) => {
-          if (
-            node.nodeType === 3 &&
-            (!node.textContent.trim() || node.textContent.includes("\u00a0"))
-          ) {
-            node.remove();
-          }
-        });
-      });
-    }
-
-    // 3. 替换侧边栏/移动端菜单图标 (图片库, 记事本, Planet, 时间轴, 个人主页, 节点收藏, 主题收藏, 设置, 语言选择, 登出)
-    if (doc.querySelectorAll) {
-      const menuItems = [
-        {
-          text: "图片库",
-          icon: "image",
-          content:
-            '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
-        },
-        {
-          text: "记事本",
-          icon: "file-text",
-          content:
-            '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/>',
-        },
-        {
-          text: "Planet",
-          icon: "globe",
-          content:
-            '<circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
-        },
-        {
-          text: "时间轴",
-          icon: "clock",
-          content:
-            '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
-        },
-        {
-          text: "个人主页",
-          href: "/member/",
-          icon: "user",
-          content:
-            '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
-        },
-        {
-          text: "节点收藏",
-          href: "/my/nodes",
-          icon: "bookmark",
-          content:
-            '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
-        },
-        {
-          text: "主题收藏",
-          href: "/my/topics",
-          icon: "star",
-          content:
-            '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
-        },
-        {
-          text: "设置",
-          href: "/settings",
-          icon: "settings",
-          content:
-            '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
-        },
-        {
-          text: "语言选择",
-          href: "/select/language",
-          icon: "languages",
-          content:
-            '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
-        },
-        {
-          text: "登出",
-          href: "/signout",
-          icon: "log-out",
-          content:
-            '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
-        },
-      ];
-
-      menuItems.forEach(({ text, href, icon, content }) => {
-        // 只在菜单区域内查找链接（#menu-body），避免影响页面其他区域的链接
-        const menuBody = doc.getElementById
-          ? doc.getElementById("menu-body")
-          : doc.querySelector("#menu-body");
-        if (!menuBody) return;
-        const links = Array.from(menuBody.querySelectorAll("a"));
-
-        links.forEach((a) => {
-          if (a.dataset.v2pSvgReplaced) return;
-
-          const linkText = a.textContent.trim();
-          const linkHref = a.getAttribute("href") || "";
-
-          // 匹配条件：文本匹配 或 href 精确匹配（避免误伤其他链接）
-          const textMatch = linkText === text;
-          // 对于 /member/ 这样的路径，只匹配纯文本，不使用 href 匹配
-          const hrefMatch =
-            href && href !== "/member/" && linkHref.includes(href);
-
-          if (textMatch || hrefMatch) {
-            // 检查是否已有图标（img 或 svg）
-            const existingImg = a.querySelector("img");
-            const existingSvg = a.querySelector("svg");
-
-            if (existingImg) {
-              // 替换已有的 img
-              a.dataset.v2pSvgReplaced = icon;
-              const svgNS = "http://www.w3.org/2000/svg";
-              const svg = document.createElementNS(svgNS, "svg");
-              svg.setAttribute("xmlns", svgNS);
-              svg.setAttribute("width", "16");
-              svg.setAttribute("height", "16");
-              svg.setAttribute("viewBox", "0 0 24 24");
-              svg.setAttribute("fill", "none");
-              svg.setAttribute("stroke", "currentColor");
-              svg.setAttribute("stroke-width", "2");
-              svg.setAttribute("stroke-linecap", "round");
-              svg.setAttribute("stroke-linejoin", "round");
-              svg.setAttribute("class", `lucide lucide-${icon}`);
-              svg.style.verticalAlign =
-                existingImg.style.verticalAlign || "middle";
-              svg.style.marginRight = "10px";
-              svg.style.opacity = "0.7";
-              svg.innerHTML = content;
-              existingImg.replaceWith(svg);
-            } else if (!existingSvg) {
-              // 为纯文本链接添加图标（仅当没有 svg 时）
-              a.dataset.v2pSvgReplaced = icon;
-              const svgNS = "http://www.w3.org/2000/svg";
-              const svg = document.createElementNS(svgNS, "svg");
-              svg.setAttribute("xmlns", svgNS);
-              svg.setAttribute("width", "16");
-              svg.setAttribute("height", "16");
-              svg.setAttribute("viewBox", "0 0 24 24");
-              svg.setAttribute("fill", "none");
-              svg.setAttribute("stroke", "currentColor");
-              svg.setAttribute("stroke-width", "2");
-              svg.setAttribute("stroke-linecap", "round");
-              svg.setAttribute("stroke-linejoin", "round");
-              svg.setAttribute("class", `lucide lucide-${icon}`);
-              svg.style.display = "inline-block";
-              svg.style.verticalAlign = "middle";
-              svg.style.marginRight = "10px";
-              svg.style.opacity = "0.7";
-              svg.innerHTML = content;
-              a.insertBefore(svg, a.firstChild);
-            }
-          }
-        });
-      });
-    }
-  }
-
-  // 初次执行
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => replaceIcons());
-  } else {
-    replaceIcons();
-  }
-
-  // 兜底：避免顶部导航永久隐藏
-  setTimeout(() => {
-    if (docEl) docEl.classList.remove("v2p-topnav-pending");
-  }, 1500);
-
-  // 监听后续插入
-  const observer = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      m.addedNodes.forEach((node) => {
-        if (node.nodeType === 1) {
-          replaceIcons(node);
-        }
-      });
-    }
-  });
-
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener("DOMContentLoaded", () => {
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
-  }
-})();
-
-// ==================== 隐藏 0 条未读提醒 & 用户名旁添加提醒图标 ====================
-(function () {
-  let hasUnread = false;
-
-  function checkUnreadNotifications() {
-    // 查找包含未读提醒的链接
-    const notificationLinks = document.querySelectorAll(
-      'a[href="/notifications"]',
-    );
-    hasUnread = false;
-
-    notificationLinks.forEach((link) => {
-      const text = link.textContent.trim();
-      const match = text.match(/^(\d+)\s*未读提醒$/);
-
-      if (match) {
-        const count = parseInt(match[1], 10);
-        if (count === 0) {
-          // 隐藏 0 条未读提醒的容器
-          const cell = link.closest(".cell");
-          if (cell) {
-            cell.style.display = "none";
-          }
-        } else {
-          hasUnread = true;
-        }
-      }
-    });
-
-    // 更新用户名旁边的提醒图标
-    updateNotificationIcon();
-  }
-
-  function updateNotificationIcon() {
-    // 查找用户名区域（移动端菜单中的 .bigger.flex-one-row）
-    const userNameContainers = document.querySelectorAll(
-      ".bigger.flex-one-row",
-    );
-
-    userNameContainers.forEach((container) => {
-      // 检查是否已经添加过图标
-      if (container.querySelector(".v2p-notification-icon")) return;
-
-      // 查找 spacer，在它前面插入图标
-      const spacer = container.querySelector(".spacer");
-      if (!spacer) return;
-
-      // 创建提醒图标链接
-      const iconLink = document.createElement("a");
-      iconLink.href = "/notifications";
-      iconLink.className = "v2p-notification-icon";
-      iconLink.title = "提醒";
-      iconLink.style.cssText = `
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-left: auto;
-        padding: 4px;
-      `;
-
-      // 创建 SVG 铃铛图标
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("xmlns", svgNS);
-      svg.setAttribute("width", "16");
-      svg.setAttribute("height", "16");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("class", "lucide lucide-bell");
-      svg.innerHTML =
-        '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>';
-
-      // 根据是否有未读提醒设置颜色
-      if (hasUnread) {
-        svg.style.color = "var(--v2p-color-accent, #f59e0b)";
-      } else {
-        svg.style.color = "var(--v2p-color-font-secondary, #999)";
-        svg.style.opacity = "0.6";
-      }
-
-      iconLink.appendChild(svg);
-      container.insertBefore(iconLink, spacer);
-    });
-
-    // 更新已存在图标的颜色
-    document.querySelectorAll(".v2p-notification-icon svg").forEach((svg) => {
-      if (hasUnread) {
-        svg.style.color = "var(--v2p-color-accent, #f59e0b)";
-        svg.style.opacity = "1";
-      } else {
-        svg.style.color = "var(--v2p-color-font-secondary, #999)";
-        svg.style.opacity = "0.6";
-      }
-    });
-  }
-
-  // 初次执行
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", checkUnreadNotifications);
-  } else {
-    checkUnreadNotifications();
-  }
-
-  // 监听动态变化
-  const observer = new MutationObserver(checkUnreadNotifications);
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener("DOMContentLoaded", () => {
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
-  }
-})();
-
-// ==================== 节点导航自定义管理 ====================
-(function () {
-  const STORAGE_KEY = "v2p_nav_config";
-  const TABS_SELECTOR = "#Tabs";
-  const docEl = document.documentElement;
-  if (docEl) docEl.classList.add("v2p-tabs-pending");
-
-  // 默认节点列表 (fallback)
-  const DEFAULT_NAV = [
-    { name: "技术", href: "/?tab=tech", visible: true },
-    { name: "创意", href: "/?tab=creative", visible: true },
-    { name: "好玩", href: "/?tab=play", visible: true },
-    { name: "Apple", href: "/?tab=apple", visible: true },
-    { name: "酷工作", href: "/?tab=jobs", visible: true },
-    { name: "交易", href: "/?tab=deals", visible: true },
-    { name: "城市", href: "/?tab=city", visible: true },
-    { name: "问与答", href: "/?tab=qna", visible: true },
-    { name: "最热", href: "/?tab=hot", visible: true },
-    { name: "全部", href: "/?tab=all", visible: true },
-    { name: "R2", href: "/?tab=r2", visible: true },
-    { name: "VXNA", href: "/xna", visible: true },
-    { name: "节点", href: "/?tab=nodes", visible: true },
-    // 关注之后是 Planet
-    { name: "Planet", href: "/planet", visible: true },
-  ];
-
-  async function getNavConfig() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get([STORAGE_KEY], (result) => {
-        resolve(result[STORAGE_KEY] || null);
-      });
-    });
-  }
-
-  async function saveNavConfig(config) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [STORAGE_KEY]: config }, resolve);
-    });
-  }
-
-  // 初始化
-  async function init() {
-    const tabsContainer = document.querySelector(TABS_SELECTOR);
-    if (!tabsContainer) {
-      if (docEl) docEl.classList.remove("v2p-tabs-pending");
-      return;
-    }
-
-    // 1. 读取当前页面上的 Tab
-    const currentLinks = Array.from(
-      tabsContainer.querySelectorAll("a.tab, a.tab_current"),
-    );
-    let currentData = currentLinks
-      .map((a) => ({
-        name: a.textContent.trim(),
-        href: a.getAttribute("href"),
-        visible: true,
-      }))
-      .filter((item) => item.name);
-
-    // 1.1 尝试抓取 Planet (它是图片链接，没有 tab class)
-    const planetLink = tabsContainer.querySelector('a[href="/planet"]');
-    if (planetLink) {
-      currentData.push({ name: "Planet", href: "/planet", visible: true });
-    }
-
-    let config = await getNavConfig();
-
-    // 如果还没有配置，初始化配置
-    if (!config) {
-      config = currentData.length > 0 ? currentData : DEFAULT_NAV;
-      // 默认把“拼车”去掉
-      config = config.filter((x) => x.name !== "拼车");
-      await saveNavConfig(config);
-    } else {
-      // 检查现有配置是否包含 Planet，如果不包含（旧数据），则补上
-      const hasPlanet = config.some((item) => item.href === "/planet");
-      if (!hasPlanet) {
-        config.push({ name: "Planet", href: "/planet", visible: true });
-        await saveNavConfig(config);
-      }
-    }
-
-    renderTabs(tabsContainer, config);
-    if (docEl) docEl.classList.remove("v2p-tabs-pending");
-  }
-
-  // 图标映射 (name -> svg path content)
-  const TAB_ICONS = {
-    技术: '<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />', // code
-    创意: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-1 1.5-2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" /><path d="M9 18h6" /><path d="M10 22h4" />', // lightbulb
-    好玩: '<line x1="6" x2="10" y1="12" y2="12" /><line x1="8" x2="8" y1="10" y2="14" /><line x1="15" x2="15.01" y1="13" y2="13" /><line x1="18" x2="18.01" y1="11" y2="11" /><rect width="20" height="12" x="2" y="6" rx="2" />', // gamepad-2
-    Apple:
-      '<svg width="14" height="14" viewBox="-1.5 0 20 20" version="1.1" xmlns="http://www.w3.org/2000/svg" fill="currentColor" style="margin-right: 4px; opacity: 0.8;"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><g transform="translate(-102.000000, -7439.000000)" fill="currentColor"><g transform="translate(56.000000, 160.000000)"><path d="M57.5708873,7282.19296 C58.2999598,7281.34797 58.7914012,7280.17098 58.6569121,7279 C57.6062792,7279.04 56.3352055,7279.67099 55.5818643,7280.51498 C54.905374,7281.26397 54.3148354,7282.46095 54.4735932,7283.60894 C55.6455696,7283.69593 56.8418148,7283.03894 57.5708873,7282.19296 M60.1989864,7289.62485 C60.2283111,7292.65181 62.9696641,7293.65879 63,7293.67179 C62.9777537,7293.74279 62.562152,7295.10677 61.5560117,7296.51675 C60.6853718,7297.73474 59.7823735,7298.94772 58.3596204,7298.97372 C56.9621472,7298.99872 56.5121648,7298.17973 54.9134635,7298.17973 C53.3157735,7298.17973 52.8162425,7298.94772 51.4935978,7298.99872 C50.1203933,7299.04772 49.0738052,7297.68074 48.197098,7296.46676 C46.4032359,7293.98379 45.0330649,7289.44985 46.8734421,7286.3899 C47.7875635,7284.87092 49.4206455,7283.90793 51.1942837,7283.88393 C52.5422083,7283.85893 53.8153044,7284.75292 54.6394294,7284.75292 C55.4635543,7284.75292 57.0106846,7283.67793 58.6366882,7283.83593 C59.3172232,7283.86293 61.2283842,7284.09893 62.4549652,7285.8199 C62.355868,7285.8789 60.1747177,7287.09489 60.1989864,7289.62485"></path></g></g></g></svg>',
-    酷工作:
-      '<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /><rect width="20" height="14" x="2" y="6" rx="2" />', // briefcase
-    交易: '<path d="m21 16-2 6H5l-2-6" /><path d="M3 6v10c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V6" /><path d="M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2" />', // shopping-bag
-    城市: '<rect width="16" height="20" x="4" y="2" rx="2" ry="2" /><path d="M9 22v-4h6v4" /><path d="M8 6h.01" /><path d="M16 6h.01" /><path d="M12 6h.01" /><path d="M12 10h.01" /><path d="M12 14h.01" /><path d="M16 10h.01" /><path d="M16 14h.01" /><path d="M8 10h.01" /><path d="M8 14h.01" />', // building-2
-    问与答:
-      '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />', // message-circle-question
-    最热: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.1.243-2.143.5-3.5a6 6 0 0 1 1.5-2.5c-.002 1.25.502 2.5 1.5 3.5.5.5 1 1.5 1 3a2 2 0 0 1-2 2z" />', // flame
-    全部: '<rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" />', // layout-grid
-    R2: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" x2="12" y1="22.08" y2="12" />', // box
-    VXNA: '<path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" />', // rss
-    节点: '<line x1="4" x2="20" y1="9" y2="9" /><line x1="4" x2="20" y1="15" y2="15" /><line x1="10" x2="8" y1="3" y2="21" /><line x1="16" x2="14" y1="3" y2="21" />', // hash
-    关注: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />', // users
-  };
-
-  function renderTabs(container, config) {
-    // 保留非 tab 元素，但要排除 Planet (因为它现在归 config 管)
-    const extras = [];
-    Array.from(container.childNodes).forEach((node) => {
-      // ... (省略: 与之前一致)
-      if (
-        node.nodeType === 1 &&
-        !node.classList.contains("tab") &&
-        !node.classList.contains("tab_current") &&
-        !node.classList.contains("v2p-nav-settings-btn")
-      ) {
-        // 排除 Planet 链接
-        if (node.tagName === "A" && node.getAttribute("href") === "/planet") {
-          return;
-        }
-        extras.push(node);
-      }
-    });
-
-    // 清空容器
-    container.innerHTML = "";
-
-    // 渲染 config 中的 tab
-    config.forEach((item) => {
-      if (item.visible) {
-        const a = document.createElement("a");
-        a.href = item.href;
-
-        // 特殊处理 Planet: 显示 SVG 图标
-        if (item.href === "/planet") {
-          a.innerHTML =
-            '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.8;"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" x2="22" y1="12" y2="12"/></svg>';
-          a.className = "tab v2p-hover-btn";
-          a.style.marginLeft = "10px";
-          a.style.display = "inline-flex";
-          a.style.alignItems = "center";
-        } else {
-          // 注入 SVG 图标
-          const iconPath = TAB_ICONS[item.name];
-          let iconHtml = "";
-          if (iconPath) {
-            // 检查是否是完整的 SVG 字符串（例如 Apple 图标）
-            if (iconPath.trim().startsWith("<svg")) {
-              iconHtml = iconPath;
-            } else {
-              // 否则作为 path 注入到标准 SVG 容器中
-              iconHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; opacity: 0.8;">${iconPath}</svg>`;
-            }
-          }
-
-          a.innerHTML = `${iconHtml}${item.name}`;
-
-          // 为了让图标和文字居中对齐，使用 flex
-          a.style.display = "inline-flex";
-          a.style.alignItems = "center";
-
-          // current 判断：优先从 URL 参数获取，没有则从 localStorage 恢复
-          const urlTab = new URLSearchParams(window.location.search).get("tab");
-          const currentTab = urlTab || localStorage.getItem("v2p_last_tab_id");
-          const itemTab = new URL(
-            item.href,
-            "https://v2ex.com",
-          ).searchParams.get("tab");
-
-          // 如果 URL 有 ?tab= 参数，保存到 localStorage
-          if (urlTab) {
-            localStorage.setItem("v2p_last_tab_id", urlTab);
-          }
-
-          if (currentTab === itemTab && itemTab) {
-            a.className = "tab_current";
-          } else if (window.location.pathname === item.href) {
-            a.className = "tab_current";
-          } else {
-            a.className = "tab v2p-hover-btn";
-          }
-        }
-        container.appendChild(a);
-      }
-    });
-
-    // 把 extras 加回去 (Planet 图标等)
-    extras.forEach((node) => container.appendChild(node));
-
-    // 添加设置按钮
-    const settingsBtn = document.createElement("span");
-    settingsBtn.className = "v2p-nav-settings-btn v2p-hover-btn";
-    settingsBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
-    settingsBtn.title = "自定义导航";
-    settingsBtn.style.cursor = "pointer";
-    settingsBtn.style.marginLeft = "10px";
-    settingsBtn.style.verticalAlign = "middle";
-    settingsBtn.style.display = "inline-flex";
-    settingsBtn.style.alignItems = "center";
-    settingsBtn.style.justifyContent = "center";
-    settingsBtn.style.lineHeight = "1";
-    settingsBtn.style.color = "#ccc";
-
-    settingsBtn.onclick = () => openNavSettings(config);
-
-    container.appendChild(settingsBtn);
-    if (docEl) docEl.classList.remove("v2p-tabs-pending");
-
-    // ★ 移动端 Tabs 滚动位置恢复 & 记忆
-    // renderTabs 会 innerHTML='' 重建容器，导致之前的 scrollLeft 和 scroll 监听器丢失
-    // 所以必须在这里重新恢复和绑定
-    if (document.body && document.body.classList.contains("v2p-mobile")) {
-      const SCROLL_STORAGE_KEY = "v2p-mobile-tabs-scroll";
-      // 首页所有 tab 共用 "home"；其他页面用路径
-      const pageKey = (() => {
-        const path = location.pathname || "/";
         try {
-          const tab = new URLSearchParams(location.search).get("tab") || "";
-          return tab || path === "/" ? "home" : path;
+            // 1. 看 Wrapper / body / html 有没有 Night 类（有些页面 / 移动端会这么标）
+            const wrapper = document.getElementById("Wrapper");
+            const body = document.body;
+            const docEl = document.documentElement;
+
+            if (wrapper && wrapper.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
+            if (body && body.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
+            if (docEl && docEl.classList.contains("Night")) {
+                nativeNight = 1;
+                return nativeNight;
+            }
+
+            // 2. 看代码高亮的 CSS，是 tomorrow 还是 tomorrow-night
+            const head = document.head || document.documentElement;
+            if (head) {
+                const link = head.querySelector(
+                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+                );
+                if (link) {
+                    const href = link.getAttribute("href") || "";
+                    if (href.includes("tomorrow-night.css")) {
+                        nativeNight = 1;
+                        return nativeNight;
+                    }
+                    if (href.includes("tomorrow.css")) {
+                        nativeNight = 0;
+                        return nativeNight;
+                    }
+                }
+            }
+
+            // 3. 扫一遍 <script> 里的 SITE_NIGHT = 0/1
+            const scripts = document.querySelectorAll("script");
+            for (const s of scripts) {
+                const txt = s.textContent || "";
+                const m = txt.match(/SITE_NIGHT\s*=\s*(\d)/);
+                if (m) {
+                    nativeNight = Number(m[1]) === 1 ? 1 : 0;
+                    return nativeNight;
+                }
+            }
+
+            // 4. 移动端顶栏的图标：<img class="site-theme-toggle mobile">
+            // 一般规则是：当前是暗色 → 图标是“Light”；当前是亮色 → 图标是“Dark”
+            const mobileToggleImg =
+                document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
+                document.querySelector("img.site-theme-toggle");
+            if (mobileToggleImg) {
+                const src = mobileToggleImg.getAttribute("src") || "";
+                const alt = (mobileToggleImg.getAttribute("alt") || "").toLowerCase();
+
+                if (src.includes("toggle-light") || alt.includes("light")) {
+                    // 图标提示“切到 Light”，说明当前是 Dark
+                    nativeNight = 1;
+                    return nativeNight;
+                }
+                if (src.includes("toggle-dark") || alt.includes("dark")) {
+                    // 图标提示“切到 Dark”，说明当前是 Light
+                    nativeNight = 0;
+                    return nativeNight;
+                }
+            }
+        } catch (err) {
+            // ignore
+        }
+
+        // 实在判断不出来，就当成浅色
+        nativeNight = 0;
+        return nativeNight;
+    }
+
+    // 根据 isDark 同步：
+    // 1) 请求原始的 night toggle URL，修改服务端 SITE_NIGHT
+    // 2) 尽量把当前页面的 tomorrow*.css 也切到对应版本，避免代码高亮闪屏
+    // 3) 同步移动端菜单里的图标
+    function syncNativeNight(isDark) {
+        const target = isDark ? 1 : 0;
+        const current = detectNativeNight();
+        if (current === target) return;
+
+        nativeNight = target;
+
+        // ① 通知服务端切换 SITE_NIGHT
+        try {
+            // 先按桌面端的选择器找
+            let legacy = document.querySelector(
+                "#Rightbar .light-toggle, #Top .light-toggle, .top .light-toggle",
+            );
+
+            // 如果是移动端，可能没有 light-toggle class，用 href 来兜底
+            if (!legacy) {
+                legacy = document.querySelector('a[href*="/settings/night/toggle"]');
+            }
+
+            const href = legacy && legacy.getAttribute("href");
+            if (href) {
+                fetch(href, { method: "GET", credentials: "include" }).catch(() => { });
+            }
+        } catch (err) {
+            // ignore
+        }
+
+        // ② 同步当前页面的 tomorrow / tomorrow-night CSS（代码高亮）
+        try {
+            const head = document.head || document.documentElement;
+            if (head) {
+                const link = head.querySelector(
+                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+                );
+                if (link) {
+                    const href = link.getAttribute("href") || "";
+                    if (target === 1) {
+                        // 切到 tomorrow-night.css
+                        if (
+                            href.includes("tomorrow.css") &&
+                            !href.includes("tomorrow-night.css")
+                        ) {
+                            link.href = href.replace("tomorrow.css", "tomorrow-night.css");
+                        }
+                    } else {
+                        // 切回 tomorrow.css
+                        if (href.includes("tomorrow-night.css")) {
+                            link.href = href.replace("tomorrow-night.css", "tomorrow.css");
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            // ignore
+        }
+
+        // ③ 同步移动端菜单里的图标显示
+        try {
+            const mobileToggleImg =
+                document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
+                document.querySelector("img.site-theme-toggle");
+
+            if (mobileToggleImg) {
+                if (target === 1) {
+                    // 当前暗色 → 图标应该显示 Light
+                    mobileToggleImg.src = "/static/img/toggle-light.png";
+                    mobileToggleImg.alt = "Light";
+                } else {
+                    // 当前亮色 → 图标应该显示 Dark
+                    mobileToggleImg.src = "/static/img/toggle-dark.png";
+                    mobileToggleImg.alt = "Dark";
+                }
+            }
+        } catch (err) {
+            // ignore
+        }
+    }
+
+    // 缓存当前主题模式，减少对 localStorage 的访问
+    let currentMode = null;
+
+    function getSavedMode() {
+        if (currentMode && THEME_MODES.includes(currentMode)) return currentMode;
+
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (THEME_MODES.includes(raw)) {
+            currentMode = raw;
+            return raw;
+        }
+
+        // 本地没有记录时，根据站点原生 SITE_NIGHT 决定初始模式：
+        // SITE_NIGHT = 1 → 我们默认用 v2p-theme-dark-default
+        // SITE_NIGHT = 0 → 默认用 v2p-theme-light-default
+        const native = detectNativeNight();
+        currentMode = native === 1 ? "dark" : "light";
+        try {
+            localStorage.setItem(STORAGE_KEY, currentMode);
+        } catch (e) { }
+        return currentMode;
+    }
+
+    function isSystemDark() {
+        try {
+            return (
+                window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+            );
         } catch {
-          return path;
+            return false;
         }
-      })();
-      const fullKey = `${SCROLL_STORAGE_KEY}:${pageKey}`;
-
-      // 恢复滚动位置（使用 rAF 确保布局完成）
-      requestAnimationFrame(() => {
-        const saved = localStorage.getItem(fullKey);
-        if (saved != null) {
-          const val = Number(saved);
-          if (!Number.isNaN(val)) {
-            container.scrollLeft = val;
-            return;
-          }
-        }
-        // 没有保存记录时，让当前 tab 居中显示
-        const current = container.querySelector(".tab_current");
-        if (current) {
-          const parentRect = container.getBoundingClientRect();
-          const itemRect = current.getBoundingClientRect();
-          container.scrollLeft +=
-            itemRect.left -
-            parentRect.left -
-            (parentRect.width - itemRect.width) / 2;
-        }
-      });
-
-      // 监听滚动，保存位置
-      let ticking = false;
-      container.addEventListener(
-        "scroll",
-        () => {
-          if (ticking) return;
-          ticking = true;
-          requestAnimationFrame(() => {
-            ticking = false;
-            localStorage.setItem(fullKey, String(container.scrollLeft));
-          });
-        },
-        { passive: true },
-      );
-    }
-  }
-
-  function openNavSettings(currentConfig) {
-    // 移除旧的（如果存在）
-    let existingMenu = document.getElementById("v2p-nav-menu");
-    if (existingMenu) {
-      existingMenu.remove();
-      return; // 如果已存在，再次点击则是关闭
     }
 
-    const settingsBtn = document.querySelector(".v2p-nav-settings-btn");
-    if (!settingsBtn) return;
+    /**
+     * 给元素应用主题类（返回当前是否为深色）
+     */
+    function applyThemeToElement(element, effectiveMode) {
+        if (!element) return false;
 
-    const menu = document.createElement("div");
-    menu.id = "v2p-nav-menu";
-    // 样式复用 .v2p-theme-menu 的风格，但针对内容做微调
-    menu.style.cssText = `
-        position: absolute;
-        top: ${settingsBtn.offsetTop + settingsBtn.offsetHeight + 5}px;
-        right: 0; /* 对齐右侧 */
-        background-color: rgba(var(--v2p-color-bg-content-rgb), 0.75);
-        border: 1px solid var(--box-border-color);
-        box-shadow: var(--v2p-widget-shadow);
-        border-radius: 14px;
-        padding: 6px;
-        display: flex;
-        flex-direction: column;
-        width: 220px;
-        z-index: 2000;
-        backdrop-filter: blur(12px) saturate(180%);
-        -webkit-backdrop-filter: blur(12px) saturate(180%);
-        animation: v2p-fade-in 0.15s ease-out;
-    `;
+        const cls = element.classList;
+        const toRemove = [];
 
-    // 如果父容器 #Tabs 是 relative/fixed/absolute，offsetParent 可能是它
-    // 我们把 menu 挂到 document.body 并手动计算位置，或者直接挂 settingsBtn 旁边（如果 Tab 容器没有 overflow:hidden）
-    // 为了保险起见，挂在 body 上，绝对定位
-    const rect = settingsBtn.getBoundingClientRect();
-    menu.style.position = "absolute";
-    menu.style.top = window.scrollY + rect.bottom + 5 + "px";
-    menu.style.left = window.scrollX + rect.right - 220 + "px"; // 右对齐
-
-    const list = document.createElement("div");
-    list.style.cssText = `
-        max-height: 300px;
-        overflow-y: auto;
-        margin-bottom: 6px;
-    `;
-
-    let dragSrcIndex = null;
-
-    function clearDragStyles() {
-      list
-        .querySelectorAll(".v2p-nav-drop-before, .v2p-nav-drop-after")
-        .forEach((el) => {
-          el.classList.remove("v2p-nav-drop-before", "v2p-nav-drop-after");
-          el.style.boxShadow = "";
+        cls.forEach((c) => {
+            if (c.startsWith("v2p-theme-") || c === "Night") {
+                toRemove.push(c);
+            }
         });
+        toRemove.forEach((c) => cls.remove(c));
+
+        let isDark = false;
+        switch (effectiveMode) {
+            case "dark":
+                cls.add("v2p-theme-dark-default", "Night");
+                isDark = true;
+                break;
+            case "light":
+                cls.add("v2p-theme-light-default");
+                break;
+            case "dawn":
+                cls.add("v2p-theme-dawn");
+                break;
+            case "aqua":
+                cls.add("v2p-theme-aqua");
+                break;
+            default:
+                break;
+        }
+        return isDark;
     }
 
-    function moveItem(fromIndex, direction) {
-      const toIndex = fromIndex + direction;
-      if (toIndex < 0 || toIndex >= currentConfig.length) return;
-      const next = currentConfig.slice();
-      [next[fromIndex], next[toIndex]] = [next[toIndex], next[fromIndex]];
-      currentConfig.splice(0, currentConfig.length, ...next);
+    /**
+     * 同时确保 html 和 body 都应用主题
+     */
+    function ensureThemeOnBothElements(mode) {
+        const html = document.documentElement;
+        const body = document.body;
+        const wrapper = document.getElementById("Wrapper"); // ★ 新增
+
+        // 仅在 auto 模式下检测一次系统主题，避免重复调用 matchMedia
+        let effectiveMode = mode;
+        if (mode === "auto") {
+            effectiveMode = isSystemDark() ? "dark" : "light";
+        }
+
+        // The `isDark` value should be determined by the application to the main element (html)
+        // and then used for the return value.
+        // Apply to wrapper first if it exists.
+        if (wrapper) applyThemeToElement(wrapper, effectiveMode); // ★ 新增
+
+        // Apply to html and capture the isDark result
+        const isDark = applyThemeToElement(html, effectiveMode);
+
+        // Apply to body
+        if (body) {
+            applyThemeToElement(body, effectiveMode);
+        }
+
+        // [Loading Screen] Remove loader now specifically because theme is ready
+        if (typeof window.__V2P_REMOVE_LOADER__ === "function") {
+            window.__V2P_REMOVE_LOADER__();
+            window.__V2P_REMOVE_LOADER__ = null;
+        }
+
+        updateThemeColor(effectiveMode);
+
+        return isDark;
     }
 
-    function reorderConfig(fromIndex, toIndex) {
-      if (fromIndex == null || toIndex == null || fromIndex === toIndex) return;
-      const next = currentConfig.slice();
-      const [moved] = next.splice(fromIndex, 1);
-      const insertIndex = toIndex > fromIndex ? toIndex - 1 : toIndex;
-      next.splice(insertIndex, 0, moved);
-      currentConfig.splice(0, currentConfig.length, ...next);
-    }
-
-    function renderList() {
-      list.innerHTML = "";
-      currentConfig.forEach((item, index) => {
-        const row = document.createElement("div");
-        // 复用 .v2p-theme-menu-item 的样式感
-        row.className = "v2p-theme-menu-item"; // 使用既有类名以获得 hover 效果
-        row.style.cssText = `
-                padding: 6px 10px;
-                margin: 2px 0;
-                cursor: default;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                border-radius: 8px;
-                font-size: 13px;
-                color: var(--v2p-color-font-secondary);
-                justify-content: space-between;
-            `;
-
-        // 左侧：拖拽 + Checkbox + 文字
-        const leftGroup = document.createElement("div");
-        leftGroup.style.display = "flex";
-        leftGroup.style.alignItems = "center";
-        leftGroup.style.gap = "8px";
-
-        // Move up/down buttons (works on both desktop and mobile)
-        const moveGroup = document.createElement("span");
-        moveGroup.style.cssText = "display:inline-flex;flex-direction:column;gap:0;margin-right:2px;";
-
-        const btnUp = document.createElement("button");
-        btnUp.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
-        btnUp.style.cssText = "border:none;background:none;padding:1px 3px;cursor:pointer;opacity:0.35;line-height:0;-webkit-tap-highlight-color:transparent;";
-        btnUp.disabled = index === 0;
-        if (index === 0) btnUp.style.opacity = "0.12";
-        btnUp.onclick = async (e) => {
-          e.stopPropagation();
-          moveItem(index, -1);
-          renderList();
-          await saveAndRefresh();
+    /**
+     * 更新浏览器的主题色（适配地址栏/顶栏颜色）
+     */
+    function updateThemeColor(mode) {
+        const colorMap = {
+            light: "#f2f3f5",
+            dawn: "#faf4ed", // 晨光主题背景色
+            aqua: "#f2f7fa", // 水色主题背景色
+            dark: "#1c2128",
         };
 
-        const btnDown = document.createElement("button");
-        btnDown.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-        btnDown.style.cssText = "border:none;background:none;padding:1px 3px;cursor:pointer;opacity:0.35;line-height:0;-webkit-tap-highlight-color:transparent;";
-        btnDown.disabled = index === currentConfig.length - 1;
-        if (index === currentConfig.length - 1) btnDown.style.opacity = "0.12";
-        btnDown.onclick = async (e) => {
-          e.stopPropagation();
-          moveItem(index, 1);
-          renderList();
-          await saveAndRefresh();
+        const color = colorMap[mode] || colorMap.light;
+
+        let metas = document.querySelectorAll('meta[name="theme-color"]');
+        if (!metas || metas.length === 0) {
+            const meta = document.createElement("meta");
+            meta.name = "theme-color";
+            if (document.head) {
+                document.head.appendChild(meta);
+            } else {
+                document.documentElement.appendChild(meta);
+            }
+            metas = [meta];
+        }
+        metas.forEach((m) => {
+            m.content = color;
+        });
+    }
+
+    /**
+     * 更新右侧切换按钮的文案/状态（可以按需求再优化文案）
+     */
+    function updateToggleButtons(mode, isDark) {
+        const toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        const nameMap = {
+            light: "亮色",
+            dark: "暗色",
+            dawn: "晨光",
+            aqua: "水蓝",
+            auto: "跟随系统",
         };
 
-        moveGroup.appendChild(btnUp);
-        moveGroup.appendChild(btnDown);
+        toggles.forEach((btn) => {
+            btn.setAttribute("data-theme-mode", mode);
+            btn.setAttribute("aria-pressed", isDark ? "true" : "false");
 
-        // Desktop drag handle (hidden on mobile via media query)
-        const dragHandle = document.createElement("span");
-        dragHandle.className = "v2p-nav-drag-handle";
-        dragHandle.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>';
-        dragHandle.style.cursor = "grab";
-        dragHandle.style.display = "inline-flex";
-        dragHandle.style.alignItems = "center";
-        dragHandle.style.opacity = "0.6";
-        dragHandle.title = "拖拽排序";
+            const label = nameMap[mode] || "";
+            if (label) {
+                btn.setAttribute("aria-label", label);
+                btn.title = label;
+            }
 
-        dragHandle.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          row.draggable = true;
+            // ★ 移动端菜单里的图片按钮
+            const mobileImg = btn.querySelector("img.site-theme-toggle.mobile");
+            if (mobileImg) {
+                if (isDark) {
+                    mobileImg.src = "/static/img/toggle-light.png";
+                    mobileImg.alt = "Light";
+                } else {
+                    mobileImg.src = "/static/img/toggle-dark.png";
+                    mobileImg.alt = "Dark";
+                }
+                return;
+            }
+
+            // ① PC 端 / 顶部 .light-toggle：用 SVG 图标
+            if (btn.classList.contains("light-toggle")) {
+                btn.innerHTML = isDark
+                    ? '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom;"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>'
+                    : '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom;"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>';
+
+                return;
+            }
+
+            // ② 其它纯文字按钮，用文字显示当前模式
+            if (!btn.children.length) {
+                if (!btn.dataset.originalLabel) {
+                    btn.dataset.originalLabel = btn.textContent || "";
+                }
+                btn.textContent = label || btn.dataset.originalLabel;
+            }
         });
+    }
 
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.checked = item.visible;
-        checkbox.style.cursor = "pointer";
-        checkbox.onclick = (e) => e.stopPropagation();
-        checkbox.onchange = (e) => {
-          item.visible = e.target.checked;
-          saveAndRefresh();
+    /**
+     * 点击切换主题：按数组顺序循环
+     */
+    /**
+     * 确保页面上存在主题切换按钮：
+     * - 优先使用已经带有 .v2p-color-mode-toggle 的元素
+     * - 否则复用 V2EX 右侧 / 顶部原生的 .light-toggle 按钮并加上 class
+     */
+    function ensureToggleButtons() {
+        let toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        // 检查是否有「可见的」toggle 按钮（原生按钮可能被 CSS display:none 隐藏）
+        const visible = Array.from(toggles).filter(el => el.offsetHeight > 0);
+        if (visible.length) return toggles;
+
+        // 手动创建一个新的切换按钮，替代被屏蔽的原生按钮
+        // 1. 尝试在 #Top .tools 里插入
+        const topTools = document.querySelector("#Top .tools");
+        if (topTools) {
+            const newLink = document.createElement("a");
+            newLink.href = "javascript:;";
+            // 添加 light-toggle 类，以便 updateToggleButtons 能自动为它注入 SVG 图标
+            newLink.className =
+                "top v2p-hover-btn v2p-color-mode-toggle light-toggle";
+            newLink.title = "切换主题";
+            // newLink.innerHTML = "主题"; // 不需要文字了，会被 SVG 替换
+            topTools.appendChild(newLink);
+        }
+
+        // 2. 尝试在右侧边栏插入 (如果有 .light-toggle 的位置)
+        // const rightToggle = document.querySelector("#Rightbar .light-toggle");
+        // 也可以直接 append 到 #Rightbar 某个 box 里，视情况而定
+
+        // ② 移动端菜单里的图片按钮
+        // 在新版 V2EX 中，这个菜单可能是一个 #menu-body
+        const menuBody = document.getElementById("menu-body");
+        if (menuBody) {
+            // 找到原生的切换按钮链接 (注意：不仅是 .light-toggle，很多时候它只是一个普通的 a 标签，href 指向 /settings/night/toggle)
+            const nativeToggleLink = menuBody.querySelector(
+                'a[href*="/settings/night/toggle"]',
+            );
+
+            if (nativeToggleLink) {
+                // 1. 移除 href，防止 CSS (a[href*="/settings/night/toggle"] { display: none }) 把它隐藏
+                // 同时这也防止了点击触发原生的跳转
+                nativeToggleLink.removeAttribute("href");
+                nativeToggleLink.setAttribute("href", "javascript:;");
+
+                // 2. 加上我们的 trigger class，以及 V2EX 标准菜单项 class 'top'
+                nativeToggleLink.classList.add("v2p-color-mode-toggle");
+                nativeToggleLink.classList.add("top");
+
+                // 2.1 强制重置样式 (Nuclear Option)
+                // 使用 setProperty('...','important') 确保覆盖原生可能存在的 narrow width 规则
+                nativeToggleLink.style.setProperty(
+                    "align-items",
+                    "center",
+                    "important",
+                );
+                nativeToggleLink.style.setProperty("width", "100%", "important");
+                nativeToggleLink.style.setProperty("height", "auto", "important");
+                nativeToggleLink.style.setProperty(
+                    "white-space",
+                    "nowrap",
+                    "important",
+                );
+
+                nativeToggleLink.style.textAlign = "left";
+                nativeToggleLink.style.backgroundColor = "transparent";
+                nativeToggleLink.style.padding = "10px 15px"; // 恢复 padding 确保对齐
+                nativeToggleLink.style.boxSizing = "border-box";
+
+                // 3. 替换内容
+                nativeToggleLink.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: block; margin-right: 10px; opacity: 0.7; color: var(--v2p-color-font-secondary);"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                    <span>主题设置</span>
+                `;
+            }
+        }
+
+        toggles = document.querySelectorAll(TOGGLE_SELECTOR);
+        return toggles;
+    }
+
+    function bindToggleEvents() {
+        console.log("V2P: bindToggleEvents start");
+        // 尝试初始化一下，但不依赖返回值
+        ensureToggleButtons();
+
+        const current = currentMode || getSavedMode();
+        const isDark = ensureThemeOnBothElements(current);
+        updateToggleButtons(current, isDark);
+        // syncNativeNight(isDark); // 彻底封印：防止初始化时触发原生主题切换
+
+        // 定义主题选项
+        const themeOptions = [
+            { key: "light", name: "Classic Light", label: "浅色" },
+            { key: "dawn", name: "Dawn", label: "晨光" },
+            { key: "aqua", name: "Aqua", label: "水色" },
+            { key: "dark", name: "Dark", label: "深色" },
+            { key: "auto", name: "System", label: "跟随系统" },
+        ];
+
+        // 创建菜单 DOM
+        const menuEl = document.createElement("div");
+        menuEl.className = "v2p-theme-menu";
+
+        // 渲染菜单项
+        const renderMenu = () => {
+            const curMode = currentMode || getSavedMode();
+            menuEl.innerHTML = themeOptions
+                .map((opt) => {
+                    const isActive = curMode === opt.key;
+                    // 使用简单的 SVG 图标表示选中状态
+                    const checkIcon = isActive
+                        ? `<div class="icon" style="font-size: 16px; line-height: 1;">✓</div>`
+                        : `<div class="icon"></div>`;
+
+                    return `
+            <div class="v2p-theme-menu-item ${isActive ? "active" : ""}" data-key="${opt.key}">
+              ${checkIcon}
+              <span>${opt.label}</span>
+            </div>
+          `;
+                })
+                .join("");
+
+            // 绑定点击事件
+            menuEl.querySelectorAll(".v2p-theme-menu-item").forEach((item) => {
+                item.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const next = item.dataset.key;
+
+                    currentMode = next;
+                    localStorage.setItem(STORAGE_KEY, next);
+                    syncNativeNight(next);
+
+                    let dark = false;
+                    // 如果是 auto，需要实时计算
+                    if (next === "auto") {
+                        if (
+                            window.matchMedia &&
+                            window.matchMedia("(prefers-color-scheme: dark)").matches
+                        ) {
+                            dark = true;
+                        }
+                    } else {
+                        dark = ensureThemeOnBothElements(next);
+                    }
+
+                    // 为 auto 模式特殊处理 ensureThemeOnBothElements 中可能没有 auto 的逻辑，需要复用 ensureThemeOnBothElements(next)
+                    // 但原函数对于 'auto' 可能会回退到 'light' 或 'dark'？
+                    // 让我们看一下 ensureThemeOnBothElements 的实现：
+                    // 它里面 switch(mode) ... case 'auto': ...
+                    // 所以直接调用是安全的
+                    dark = ensureThemeOnBothElements(next);
+
+                    updateToggleButtons(next, dark);
+                    // syncNativeNight(dark); // 暂时屏蔽：用户反馈可能导致页面抖动/冲突
+
+                    // 关闭菜单
+                    menuEl.classList.remove("show");
+                    // 重新渲染以更新 active 状态
+                    renderMenu();
+                });
+            });
         };
 
-        const name = document.createElement("span");
-        name.textContent = item.name;
+        // 插入菜单到 DOM
+        document.body.appendChild(menuEl);
+        renderMenu();
 
-        leftGroup.appendChild(moveGroup);
-        leftGroup.appendChild(dragHandle);
-        leftGroup.appendChild(checkbox);
-        leftGroup.appendChild(name);
+        // 使用事件委托处理点击
+        document.addEventListener(
+            "click",
+            (e) => {
+                // 1. 点击了主题切换按钮
+                // 兼容 v2p-color-mode-toggle 和 light-toggle 以及 toggle 内部的 img/svg
+                const toggleBtn =
+                    e.target.closest(TOGGLE_SELECTOR) ||
+                    e.target.closest(".light-toggle");
 
-        row.appendChild(leftGroup);
-        list.appendChild(row);
+                if (toggleBtn) {
+                    console.log("V2P: Toggle button clicked", toggleBtn);
+                    // 阻止默认跳转行为（因为 toggle 按钮通常是个 <a> 标签）
+                    e.preventDefault();
+                    // 阻止冒泡，避免触发 document 上的其他点击关闭逻辑
+                    // 但注意，我们自己在 document 上监听，所以这里的 stopPropagation 只能阻止它可以阻止的父级
+                    // 对于同级 document listener，需要靠执行顺序或逻辑判断
+                    e.stopPropagation();
 
-        row.addEventListener("dragstart", (e) => {
-          dragSrcIndex = index;
-          row.classList.add("v2p-nav-dragging");
-          row.style.opacity = "0.45";
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", "");
-        });
+                    // 如果菜单已经打开，且点击的是同一个按钮（或者只是想关闭）
+                    if (menuEl.classList.contains("show")) {
+                        menuEl.classList.remove("show");
+                        return;
+                    }
 
-        row.addEventListener("dragover", (e) => {
-          if (dragSrcIndex == null || dragSrcIndex === index) return;
-          e.preventDefault();
-          const rect = row.getBoundingClientRect();
-          const dropAfter = e.clientY >= rect.top + rect.height / 2;
-          clearDragStyles();
-          row.classList.add(
-            dropAfter ? "v2p-nav-drop-after" : "v2p-nav-drop-before",
-          );
-          row.style.boxShadow = dropAfter
-            ? "0 2px 0 0 var(--v2p-color-accent, #4a90d9) inset"
-            : "0 -2px 0 0 var(--v2p-color-accent, #4a90d9) inset";
-        });
+                    // 计算位置
+                    const rect = toggleBtn.getBoundingClientRect();
+                    const scrollTop =
+                        window.pageYOffset || document.documentElement.scrollTop;
+                    const isMobile = document.body.classList.contains("v2p-mobile");
+                    const menuHeight = 200; // 菜单大概高度
+                    const menuWidth = 160; // 菜单宽度
 
-        row.addEventListener("drop", async (e) => {
-          if (dragSrcIndex == null || dragSrcIndex === index) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const rect = row.getBoundingClientRect();
-          const dropAfter = e.clientY >= rect.top + rect.height / 2;
-          const targetIndex = index + (dropAfter ? 1 : 0);
-          reorderConfig(dragSrcIndex, targetIndex);
-          dragSrcIndex = null;
-          clearDragStyles();
-          renderList();
-          await saveAndRefresh();
-        });
+                    let top, left;
 
-        row.addEventListener("dragend", () => {
-          row.draggable = false;
-          row.classList.remove("v2p-nav-dragging");
-          row.style.opacity = "";
-          dragSrcIndex = null;
-          clearDragStyles();
-        });
-      });
+                    if (isMobile) {
+                        // 移动端：向上弹出
+                        top = rect.top - menuHeight - 5 + scrollTop;
+                        left = rect.left;
+
+                        // 如果上方空间不足，则向下弹出
+                        if (top < scrollTop + 10) {
+                            top = rect.bottom + 5 + scrollTop;
+                        }
+                    } else {
+                        // 桌面端：向下弹出，右对齐
+                        top = rect.bottom + 5 + scrollTop;
+                        left = rect.right - menuWidth;
+                    }
+
+                    // 边界检查
+                    if (left < 10) left = 10;
+                    if (left + menuWidth > document.documentElement.clientWidth) {
+                        left = document.documentElement.clientWidth - menuWidth - 10;
+                    }
+
+                    menuEl.style.top = `${top}px`;
+                    menuEl.style.left = `${left}px`;
+
+                    renderMenu();
+                    menuEl.classList.add("show");
+                    return;
+                }
+
+                // 2. 点击了菜单内的元素 -> 既然是 menuEl 的子元素，不应该关闭菜单
+                if (menuEl.contains(e.target)) {
+                    return;
+                }
+
+                // 3. 点击了页面其他区域 -> 关闭菜单
+                if (menuEl.classList.contains("show")) {
+                    menuEl.classList.remove("show");
+                }
+            },
+            true,
+        ); // 使用捕获阶段 (capture: true) 尝试优先拦截点击
+
+        // 系统主题变化时，如果是 auto，就跟着变
+        if (window.matchMedia) {
+            const mq = window.matchMedia("(prefers-color-scheme: dark)");
+            mq.addEventListener("change", () => {
+                if ((currentMode || getSavedMode()) === "auto") {
+                    const dark = ensureThemeOnBothElements("auto");
+                    updateToggleButtons("auto", dark);
+                    // syncNativeNight(dark); // 屏蔽原生同步，防止页面乱跳
+                }
+            });
+        }
     }
 
-    async function saveAndRefresh() {
-      await saveNavConfig(currentConfig);
-      const tabsContainer = document.querySelector(TABS_SELECTOR);
-      if (tabsContainer) renderTabs(tabsContainer, currentConfig);
+    // ========= 3. 尽可能早地应用主题，减少“先默认再变色”的闪一下 =========
+
+    // 初始化当前主题模式并尽可能早地应用，减少"先默认再变色"的闪烁
+    // 同步原生夜间模式状态（仅本地处理，不再发送服务端请求）
+    function syncNativeNight(mode) {
+        // 判断用户期望状态
+        let wantDark = mode === "dark";
+        if (mode === "auto") {
+            wantDark =
+                window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches;
+        }
+
+        // 1. 处理代码高亮 CSS
+        const nativeLink = document.querySelector(
+            'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+        );
+        if (nativeLink) {
+            const href = nativeLink.href || "";
+            if (!wantDark && href.includes("tomorrow-night.css")) {
+                // 用户想要浅色，替换为浅色高亮
+                nativeLink.href = href.replace("tomorrow-night.css", "tomorrow.css");
+            } else if (
+                wantDark &&
+                href.includes("tomorrow.css") &&
+                !href.includes("tomorrow-night.css")
+            ) {
+                // 用户想要深色，替换为深色高亮
+                nativeLink.href = href.replace("tomorrow.css", "tomorrow-night.css");
+            }
+        }
+
+        // 2. 同步 Wrapper 和 html 的 Night 类
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            if (wantDark) {
+                wrapper.classList.add("Night");
+                document.documentElement.classList.add("Night");
+            } else {
+                wrapper.classList.remove("Night");
+                document.documentElement.classList.remove("Night");
+            }
+        }
+
+        // 注意：不再向服务端发送 fetch 请求，避免与原生主题系统冲突导致页面抖动
     }
 
-    renderList();
-    menu.appendChild(list);
+    currentMode = getSavedMode();
+    syncNativeNight(currentMode);
+    // 先对 html / body 打类（即使 body 还没挂上来也问题不大）
+    ensureThemeOnBothElements(currentMode);
 
-    // 点击外部关闭
-    function closeHandler(e) {
-      if (!menu.contains(e.target) && !settingsBtn.contains(e.target)) {
-        menu.remove();
-        document.removeEventListener("click", closeHandler);
-      }
+    // body 还没出现时，用 MutationObserver 再补一刀
+    if (!document.body) {
+        const mo = new MutationObserver(() => {
+            if (document.body) {
+                ensureThemeOnBothElements(currentMode);
+                mo.disconnect();
+            }
+        });
+        mo.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+        });
     }
 
-    // 延迟添加监听，防止本次点击触发
-    setTimeout(() => {
-      document.addEventListener("click", closeHandler);
-    }, 0);
+    // 再次强制确保 document loading 完成后主题颜色正确 (防止被原生 JS 覆盖)
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => {
+            ensureThemeOnBothElements(currentMode);
+        });
+    } else {
+        ensureThemeOnBothElements(currentMode);
+    }
 
-    document.body.appendChild(menu);
-  }
+    // ========= 4. 移动端 Tabs 横向滚动 & 位置记忆 =========
+    function initMobileTabsScroll() {
+        const body = document.body;
+        if (!body || !body.classList.contains("v2p-mobile")) return;
 
-  // 启动
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-})();
+        // Tabs 容器：兼容首页 / 其他页面
+        const tabs = document.querySelector("#Main #Tabs, #Tabs");
+        if (!tabs) return;
 
-// ==================== 清除按钮图标化 ====================
-(function () {
-  function replaceClearTextWithIcon() {
-    // 查找所有包含 clearMyRecentTopics 的清除链接
-    const clearLinks = document.querySelectorAll(
-      'a[onclick*="clearMyRecentTopics"]',
-    );
+        const STORAGE_KEY = "v2p-mobile-tabs-scroll";
 
-    clearLinks.forEach((link) => {
-      // 如果已经处理过，跳过
-      if (link.querySelector("svg")) return;
+        // 针对不同页面生成一个 key，避免互相干扰
+        const pageKey = (() => {
+            const path = location.pathname || "/";
+            const search = location.search || "";
+            try {
+                const params = new URLSearchParams(search);
+                const tab = params.get("tab") || "";
+                // 首页 tab 列表，用 tab 名区分；其他页面用路径
+                return tab ? `home?tab=${tab}` : path;
+            } catch {
+                return path + search;
+            }
+        })();
 
-      // 创建 Trash2 风格的 SVG 图标
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("xmlns", svgNS);
-      svg.setAttribute("width", "14");
-      svg.setAttribute("height", "14");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("class", "lucide lucide-trash-2");
-      svg.style.verticalAlign = "middle";
-      svg.style.opacity = "0.6";
-      svg.innerHTML =
-        '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>';
+        const fullKey = `${STORAGE_KEY}:${pageKey}`;
 
-      // 添加悬停效果
-      link.addEventListener("mouseenter", () => {
-        svg.style.opacity = "1";
-      });
-      link.addEventListener("mouseleave", () => {
-        svg.style.opacity = "0.6";
-      });
+        // 恢复滚动位置或居中当前 tab
+        const restoreOrCenter = () => {
+            const saved = localStorage.getItem(fullKey);
 
-      // 清空链接文本，添加图标
-      link.textContent = "";
-      link.title = "清除";
-      link.appendChild(svg);
+            if (saved != null) {
+                const val = Number(saved);
+                if (!Number.isNaN(val)) {
+                    tabs.scrollLeft = val;
+                    return;
+                }
+            }
+
+            // 没有保存记录时，让当前 tab 居中显示
+            const current = tabs.querySelector(".tab_current");
+            if (!current) return;
+
+            const parentRect = tabs.getBoundingClientRect();
+            const itemRect = current.getBoundingClientRect();
+            const offset =
+                itemRect.left -
+                parentRect.left -
+                (parentRect.width - itemRect.width) / 2;
+
+            tabs.scrollLeft += offset;
+        };
+
+        // 等布局完成后再滚动，避免计算不准
+        (window.requestAnimationFrame || setTimeout)(restoreOrCenter, 0);
+
+        // 监听滚动，保存位置（用 rAF 做个简单节流）
+        let ticking = false;
+        tabs.addEventListener(
+            "scroll",
+            () => {
+                if (ticking) return;
+                ticking = true;
+
+                (window.requestAnimationFrame || setTimeout)(() => {
+                    ticking = false;
+                    localStorage.setItem(fullKey, String(tabs.scrollLeft));
+                }, 16);
+            },
+            { passive: true },
+        );
+    }
+
+    // DOMReady 后再绑定按钮事件 + 监听 Wrapper 动态变化
+    function onReady(fn) {
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
+    onReady(() => {
+        bindToggleEvents();
+        initMobileTabsScroll(); // ★ 新增：初始化移动端 Tabs 横向滚动 & 记忆
+        // 监听主容器的 DOM 变化，防止部分页面局部刷新后主题类丢失
+        const wrapper = document.getElementById("Wrapper");
+        if (wrapper) {
+            let reapplyScheduled = false;
+            const mo = new MutationObserver(() => {
+                // 使用 requestAnimationFrame 做简单节流，避免频繁重复执行
+                if (reapplyScheduled) return;
+                reapplyScheduled = true;
+                (window.requestAnimationFrame || setTimeout)(() => {
+                    reapplyScheduled = false;
+                    ensureThemeOnBothElements(currentMode || getSavedMode());
+                });
+            });
+            mo.observe(wrapper, {
+                childList: true,
+                subtree: true,
+            });
+        }
     });
-  }
-
-  // 初次执行
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", replaceClearTextWithIcon);
-  } else {
-    replaceClearTextWithIcon();
-  }
-
-  // 监听动态变化（v2ex 可能会动态加载内容）
-  const observer = new MutationObserver(replaceClearTextWithIcon);
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener("DOMContentLoaded", () => {
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
-  }
-})();
-
-// ==================== V2EX Plus Settings Page ====================
-(function () {
-  const SETTINGS_PATH = "/settings";
-
-  async function initSettingsPage() {
-    if (!window.location.pathname.startsWith(SETTINGS_PATH)) return;
-
-    const navContainer = document.querySelectorAll("#Main .box .cell")[1];
-    if (!navContainer) return;
-
-    // 1. Add "V2EX Plus" Tab
-    const plusTab = document.createElement("a");
-    plusTab.href = "#v2p";
-    plusTab.className = "tab v2p-hover-btn";
-    plusTab.textContent = "V2EX Plus";
-    plusTab.id = "v2p-settings-tab";
-
-    navContainer.appendChild(plusTab);
-
-    const config = (await V2PSyncManager.getConfig()) || {};
-
-    const mainBox = document.querySelector("#Main .box");
-    if (!mainBox) return;
-
-    const boxContent = Array.from(
-      mainBox.querySelectorAll(":scope > .cell, :scope > .inner"),
-    );
-    if (boxContent.length < 2) return;
-    const navCell = boxContent[1];
-
-    // 2. Create Settings Content
-    const settingsContent = document.createElement("div");
-    settingsContent.id = "v2p-settings-panel";
-    settingsContent.style.display = "none";
-    settingsContent.innerHTML = `
-      <div class="cell">V2EX Plus 设置 (WebDAV 同步)</div>
-      <div class="inner">
-        <form id="v2p-webdav-form">
-          <table cellpadding="5" cellspacing="0" border="0" width="100%">
-            <tbody>
-              <tr>
-                <td width="120" align="right">WebDAV 地址</td>
-                <td><input type="text" class="sl" name="url" style="width: 300px;" value="${config.url || ""}" placeholder="http://192.168.1.100:5008/V2exPlus/"></td>
-              </tr>
-              <tr>
-                <td width="120" align="right">用户名</td>
-                <td><input type="text" class="sl" name="user" style="width: 300px;" value="${config.user || ""}"></td>
-              </tr>
-              <tr>
-                <td width="120" align="right">应用密码/Token</td>
-                <td><input type="password" class="sl" name="password" style="width: 300px;" value="${config.password || ""}"></td>
-              </tr>
-              <tr>
-                <td width="120" align="right"></td>
-                <td>
-                  <input type="button" class="super normal button" id="v2p-test-webdav" value="测试连接">
-                  <input type="submit" class="super normal button" value="保存配置">
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </form>
-        <div class="sep20"></div>
-        <div class="cell" style="padding: 10px 0; border-top: 1px solid var(--box-border-color); margin-top: 10px;">数据同步</div>
-        <div class="inner" style="padding: 10px 0;">
-          <input type="button" class="super normal button" id="v2p-push-sync" value="推送当前配置到云端">
-          <input type="button" class="super normal button" id="v2p-pull-sync" value="从云端拉取配置到本地">
-          <div class="sep10"></div>
-          <span class="fade">手动推送会将当前设备的主题、导航等配置覆盖云端；拉取则相反。</span>
-        </div>
-      </div>
-    `;
-    navCell.insertAdjacentElement("afterend", settingsContent);
-
-    // 3. Tab Switching Logic
-    const allTabs = navContainer.querySelectorAll("a.tab, a.tab_current");
-    const hideableContent = boxContent.slice(2);
-
-    function showV2P() {
-      allTabs.forEach((t) => (t.className = "tab v2p-hover-btn"));
-      plusTab.className = "tab_current";
-      hideableContent.forEach((el) => (el.style.display = "none"));
-      settingsContent.style.display = "block";
-    }
-
-    function hideV2P() {
-      plusTab.className = "tab v2p-hover-btn";
-      settingsContent.style.display = "none";
-      hideableContent.forEach((el) => (el.style.display = ""));
-    }
-
-    plusTab.onclick = (e) => {
-      e.preventDefault();
-      showV2P();
-      window.location.hash = "v2p";
-    };
-
-    allTabs.forEach((t) => {
-      if (t !== plusTab) {
-        t.addEventListener("click", () => {
-          if (plusTab.className === "tab_current") hideV2P();
-        });
-      }
-    });
-
-    if (window.location.hash === "#v2p") showV2P();
-
-    // 4. Form Actions
-    const form = settingsContent.querySelector("#v2p-webdav-form");
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const formData = new FormData(form);
-      const newConfig = Object.fromEntries(formData.entries());
-      await V2PSyncManager.saveConfig(newConfig);
-      window.v2pShowToast("配置已保存");
-    };
-
-    settingsContent.querySelector("#v2p-test-webdav").onclick = async () => {
-      const formData = new FormData(form);
-      const tmpConfig = Object.fromEntries(formData.entries());
-      try {
-        await V2PSyncManager.testConnection(tmpConfig);
-        window.v2pShowToast("连接成功！");
-      } catch (e) {
-        window.v2pShowToast("连接失败: " + e.message);
-      }
-    };
-
-    settingsContent.querySelector("#v2p-push-sync").onclick = async () => {
-      window.v2pShowToast("正在推送...", 0);
-      try {
-        await V2PSyncManager.push();
-        window.v2pShowToast("同步成功");
-      } catch (e) {
-        window.v2pShowToast("推送失败: " + e.message);
-      }
-    };
-
-    settingsContent.querySelector("#v2p-pull-sync").onclick = async () => {
-      window.v2pShowToast("正在拉取...", 0);
-      try {
-        await V2PSyncManager.pull();
-        window.v2pShowToast("拉取成功，即将刷新页面");
-        setTimeout(() => window.location.reload(), 1500);
-      } catch (e) {
-        window.v2pShowToast("拉取失败: " + e.message);
-      }
-    };
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initSettingsPage);
-  } else {
-    initSettingsPage();
-  }
 })();

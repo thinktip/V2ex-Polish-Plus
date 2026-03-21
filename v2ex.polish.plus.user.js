@@ -13,6 +13,8 @@
 // @icon         https://v2ex.com/static/apple-touch-icon-180.png
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @connect      *
+// @updateURL    https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.plus.user.js
+// @downloadURL  https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.plus.user.js
 // ==/UserScript==
 
 (function () {

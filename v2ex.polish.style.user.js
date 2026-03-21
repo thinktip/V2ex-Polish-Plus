@@ -8,6 +8,8 @@
 // @run-at       document-start
 // @icon         https://v2ex.com/static/apple-touch-icon-180.png
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.style.user.js
+// @downloadURL  https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.style.user.js
 // ==/UserScript==
 
 // GM_addStyle Polyfill for Chrome Extension

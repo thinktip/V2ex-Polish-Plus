@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.1
+// @version      3.5.2
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -30,7 +30,27 @@ if (typeof GM_addStyle === "undefined") {
     const docEl = document.documentElement;
     const STORAGE_KEY = "user_preferred_theme_mode";
 
-    // [Note] 初始全屏隐藏已由 critical.css 处理
+    const antiFlashStyle = document.createElement("style");
+    antiFlashStyle.id = "v2p-anti-flash";
+    antiFlashStyle.textContent = `
+        :root:not(.v2p-loaded),
+        :root:not(.v2p-loaded) body {
+            visibility: hidden !important;
+        }
+        :root:not(.v2p-loaded) #Logo,
+        :root:not(.v2p-loaded) #LogoMobile {
+            display: none !important;
+        }
+        :root {
+            background-color: #f2f3f5 !important;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                background-color: #1c2128 !important;
+            }
+        }
+    `;
+    docEl.appendChild(antiFlashStyle);
 
     // 1. 移动端检测（保持原样）
     const isMobile =
@@ -62,6 +82,20 @@ if (typeof GM_addStyle === "undefined") {
     }
 
     const initBg = THEME_BG_MAP[effectiveMode] || THEME_BG_MAP.light;
+    antiFlashStyle.textContent = `
+        :root:not(.v2p-loaded),
+        :root:not(.v2p-loaded) body {
+            visibility: hidden !important;
+        }
+        :root:not(.v2p-loaded) #Logo,
+        :root:not(.v2p-loaded) #LogoMobile {
+            display: none !important;
+        }
+        :root,
+        :root body {
+            background-color: ${initBg} !important;
+        }
+    `;
 
     // 立即应用类名，防止 Logo 等元素闪烁
     if (effectiveMode === "dark") {
@@ -197,16 +231,17 @@ if (typeof GM_addStyle === "undefined") {
             forceThemeColor();
         }
     });
-    headSwapObserver.observe(docEl, { childList: true, subtree: true });
+    headSwapObserver.observe(docEl, { childList: true });
 
     // 加载后短时间强制同步，避免地址栏随机回退
     const burstSync = () => {
+        forceThemeColor();
         let count = 0;
         const id = setInterval(() => {
             forceThemeColor();
             count += 1;
-            if (count >= 15) clearInterval(id);
-        }, 200);
+            if (count >= 5) clearInterval(id);
+        }, 250);
     };
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", burstSync);
@@ -218,43 +253,8 @@ if (typeof GM_addStyle === "undefined") {
         if (document.visibilityState === "visible") burstSync();
     });
 
-    // 2. 注入 Loading 遮罩的样式（虽然 html hidden，但 loader 我们可以设为 visible）
-    const loaderStyle = document.createElement("style");
-    loaderStyle.innerHTML = `
-        #v2p-loading-overlay {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background-color: ${initBg};
-            z-index: 2147483647;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            visibility: visible !important; /* 强制覆盖父级的 hidden */
-            opacity: 1;
-            transition: opacity 0.3s ease;
-        }
-        .v2p-spinner {
-            width: 32px; height: 32px;
-            border: 3px solid ${effectiveMode === "dark" ? "#374151" : "#e5e7eb"};
-            border-top-color: ${effectiveMode === "dark" ? "#adbac7" : "#64748b"};
-            border-radius: 50%;
-            animation: v2p-spin 0.8s linear infinite;
-        }
-        @keyframes v2p-spin { to { transform: rotate(360deg); } }
-    `;
-    docEl.appendChild(loaderStyle);
-
-    // [Fast Path] 2. 注入 Loading 元素
-    const loader = document.createElement("div");
-    loader.id = "v2p-loading-overlay";
-    loader.innerHTML = '<div class="v2p-spinner"></div>';
-    document.documentElement.appendChild(loader);
-
     // Remove loader when the page is stable
     const removeLoader = () => {
-        if (loader) loader.remove();
-        if (loaderStyle) loaderStyle.remove();
-
         // 恢复页面显示：移除所有防闪烁样式并添加加载完成类
         const antiFlashStyles = document.querySelectorAll("#v2p-anti-flash");
         antiFlashStyles.forEach((s) => s.remove());

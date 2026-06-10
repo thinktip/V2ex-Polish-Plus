@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.3
+// @version      3.5.4
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -82,6 +82,29 @@ if (typeof GM_addStyle === "undefined") {
     }
 
     const initBg = THEME_BG_MAP[effectiveMode] || THEME_BG_MAP.light;
+    const initColorScheme = effectiveMode === "dark" ? "dark" : "light";
+    const navigationCoverStyle = document.createElement("style");
+    navigationCoverStyle.id = "v2p-navigation-cover-style";
+    navigationCoverStyle.textContent = `
+        #v2p-navigation-cover {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 2147483647 !important;
+            background: ${initBg} !important;
+            pointer-events: none !important;
+            opacity: 0;
+            visibility: hidden;
+        }
+        :root.v2p-navigating,
+        :root.v2p-navigating body {
+            background-color: ${initBg} !important;
+        }
+        :root.v2p-navigating #v2p-navigation-cover {
+            opacity: 1;
+            visibility: visible;
+        }
+    `;
+    docEl.appendChild(navigationCoverStyle);
     antiFlashStyle.textContent = `
         :root:not(.v2p-loaded),
         :root:not(.v2p-loaded) body {
@@ -94,6 +117,7 @@ if (typeof GM_addStyle === "undefined") {
         :root,
         :root body {
             background-color: ${initBg} !important;
+            color-scheme: ${initColorScheme};
         }
     `;
 
@@ -110,7 +134,80 @@ if (typeof GM_addStyle === "undefined") {
 
     // 设置初始背景色 & 隐藏 html
     docEl.style.backgroundColor = initBg;
+    docEl.style.colorScheme = initColorScheme;
     // docEl.style.visibility = "hidden"; // 已由 v2p-anti-flash 处理
+
+    const isSamePageHash = (url) =>
+        url.origin === location.origin &&
+        url.pathname === location.pathname &&
+        url.search === location.search &&
+        url.hash;
+
+    const shouldCoverNavigation = (event, anchor) => {
+        if (!anchor || event.defaultPrevented) return false;
+        if (event.button != null && event.button !== 0) return false;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+        if (anchor.target && anchor.target !== "_self") return false;
+        if (anchor.hasAttribute("download")) return false;
+
+        const href = anchor.getAttribute("href");
+        if (!href || href.startsWith("#")) return false;
+        if (/^(javascript:|mailto:|tel:)/i.test(href)) return false;
+
+        try {
+            const url = new URL(href, location.href);
+            return url.origin === location.origin && !isSamePageHash(url);
+        } catch {
+            return false;
+        }
+    };
+
+    const showNavigationCover = () => {
+        if (effectiveMode !== "dark") return;
+        let cover = document.getElementById("v2p-navigation-cover");
+        if (!cover) {
+            cover = document.createElement("div");
+            cover.id = "v2p-navigation-cover";
+            docEl.appendChild(cover);
+        }
+        docEl.classList.add("v2p-navigating");
+        docEl.style.backgroundColor = initBg;
+        if (document.body) {
+            document.body.style.backgroundColor = initBg;
+        }
+    };
+
+    const hideNavigationCover = () => {
+        docEl.classList.remove("v2p-navigating");
+    };
+
+    document.addEventListener(
+        "click",
+        (event) => {
+            const anchor = event.target && event.target.closest && event.target.closest("a[href]");
+            if (shouldCoverNavigation(event, anchor)) {
+                showNavigationCover();
+            }
+        },
+        true,
+    );
+    document.addEventListener(
+        "submit",
+        (event) => {
+            const form = event.target;
+            if (!form || event.defaultPrevented) return;
+            try {
+                const action = new URL(form.getAttribute("action") || location.href, location.href);
+                if (action.origin === location.origin) showNavigationCover();
+            } catch {
+                // ignore
+            }
+        },
+        true,
+    );
+    window.addEventListener("beforeunload", showNavigationCover);
+    window.addEventListener("pagehide", showNavigationCover);
+    window.addEventListener("pageshow", hideNavigationCover);
 
     /**
      * 即时同步 theme-color

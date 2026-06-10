@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.2
+// @version      3.5.3
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -280,7 +280,7 @@ if (typeof GM_addStyle === "undefined") {
 
             // 插件完全控制主题：根据用户设置来决定是否添加/移除 Night 类
             // 而不是让原生覆盖插件设置
-            if (currentMode === "dark") {
+            if (effectiveMode === "dark") {
                 wrapper.classList.add("Night");
                 docEl.classList.add("Night");
             } else {
@@ -306,16 +306,22 @@ if (typeof GM_addStyle === "undefined") {
                 if (node.tagName === "SCRIPT" && node.textContent) {
                     if (node.textContent.includes("SITE_NIGHT")) {
                         // 根据插件设置决定是否需要修改
-                        const wantDark = currentMode === "dark";
+                        const wantDark = effectiveMode === "dark";
                         if (wantDark && node.textContent.includes("SITE_NIGHT = 0")) {
-                            // 用户想要深色但原生注入浅色，移除这个 script
-                            node.remove();
+                            // 用户想要深色但原生注入浅色，改写常量，避免后续官方 JS 读到 undefined。
+                            node.textContent = node.textContent.replace(
+                                /SITE_NIGHT\s*=\s*0/,
+                                "SITE_NIGHT = 1",
+                            );
                         } else if (
                             !wantDark &&
                             node.textContent.includes("SITE_NIGHT = 1")
                         ) {
-                            // 用户想要浅色但原生注入深色，移除这个 script
-                            node.remove();
+                            // 用户想要浅色但原生注入深色，改写常量保持官方 JS 状态一致。
+                            node.textContent = node.textContent.replace(
+                                /SITE_NIGHT\s*=\s*1/,
+                                "SITE_NIGHT = 0",
+                            );
                         }
                     }
                 }
@@ -323,7 +329,7 @@ if (typeof GM_addStyle === "undefined") {
                 // 拦截 tomorrow-night.css 或 tomorrow.css 的 link
                 if (node.tagName === "LINK" && node.rel === "stylesheet") {
                     const href = node.href || "";
-                    const wantDark = currentMode === "dark";
+                    const wantDark = effectiveMode === "dark";
 
                     if (!wantDark && href.includes("tomorrow-night.css")) {
                         // 用户想要浅色但注入了深色高亮 CSS，替换为浅色版本
@@ -4324,6 +4330,43 @@ html.Night #site-header-logo #LogoMobile {
 
     // 记录站点原生的 SITE_NIGHT（0: 浅色, 1: 深色）
     let nativeNight = null;
+    let nativeNightSyncAttempts = 0;
+    let nativeNightSyncTimer = null;
+    let nativeNightSyncReadyBound = false;
+
+    function detectServerNativeNight() {
+        if (
+            typeof window !== "undefined" &&
+            typeof window.__V2P_NATIVE_NIGHT__ === "number"
+        ) {
+            return window.__V2P_NATIVE_NIGHT__ === 1 ? 1 : 0;
+        }
+
+        try {
+            const head = document.head || document.documentElement;
+            if (head) {
+                const link = head.querySelector(
+                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
+                );
+                if (link) {
+                    const href = link.getAttribute("href") || "";
+                    if (href.includes("tomorrow-night.css")) return 1;
+                    if (href.includes("tomorrow.css")) return 0;
+                }
+            }
+
+            const scripts = document.querySelectorAll("script");
+            for (const s of scripts) {
+                const txt = s.textContent || "";
+                const m = txt.match(/SITE_NIGHT\s*=\s*(\d)/);
+                if (m) return Number(m[1]) === 1 ? 1 : 0;
+            }
+        } catch (err) {
+            // ignore
+        }
+
+        return null;
+    }
 
     // 检测当前页原生的深色 / 浅色状态：
     // 1) 优先用第一个 IIFE 写入的 window.__V2P_NATIVE_NIGHT__
@@ -4419,88 +4462,6 @@ html.Night #site-header-logo #LogoMobile {
         return nativeNight;
     }
 
-    // 根据 isDark 同步：
-    // 1) 请求原始的 night toggle URL，修改服务端 SITE_NIGHT
-    // 2) 尽量把当前页面的 tomorrow*.css 也切到对应版本，避免代码高亮闪屏
-    // 3) 同步移动端菜单里的图标
-    function syncNativeNight(isDark) {
-        const target = isDark ? 1 : 0;
-        const current = detectNativeNight();
-        if (current === target) return;
-
-        nativeNight = target;
-
-        // ① 通知服务端切换 SITE_NIGHT
-        try {
-            // 先按桌面端的选择器找
-            let legacy = document.querySelector(
-                "#Rightbar .light-toggle, #Top .light-toggle, .top .light-toggle",
-            );
-
-            // 如果是移动端，可能没有 light-toggle class，用 href 来兜底
-            if (!legacy) {
-                legacy = document.querySelector('a[href*="/settings/night/toggle"]');
-            }
-
-            const href = legacy && legacy.getAttribute("href");
-            if (href) {
-                fetch(href, { method: "GET", credentials: "include" }).catch(() => { });
-            }
-        } catch (err) {
-            // ignore
-        }
-
-        // ② 同步当前页面的 tomorrow / tomorrow-night CSS（代码高亮）
-        try {
-            const head = document.head || document.documentElement;
-            if (head) {
-                const link = head.querySelector(
-                    'link[href*="tomorrow-night.css"], link[href*="tomorrow.css"]',
-                );
-                if (link) {
-                    const href = link.getAttribute("href") || "";
-                    if (target === 1) {
-                        // 切到 tomorrow-night.css
-                        if (
-                            href.includes("tomorrow.css") &&
-                            !href.includes("tomorrow-night.css")
-                        ) {
-                            link.href = href.replace("tomorrow.css", "tomorrow-night.css");
-                        }
-                    } else {
-                        // 切回 tomorrow.css
-                        if (href.includes("tomorrow-night.css")) {
-                            link.href = href.replace("tomorrow-night.css", "tomorrow.css");
-                        }
-                    }
-                }
-            }
-        } catch (err) {
-            // ignore
-        }
-
-        // ③ 同步移动端菜单里的图标显示
-        try {
-            const mobileToggleImg =
-                document.querySelector("#menu-body img.site-theme-toggle.mobile") ||
-                document.querySelector("img.site-theme-toggle");
-
-            if (mobileToggleImg) {
-                if (target === 1) {
-                    // 当前暗色 → 图标应该显示 Light
-                    mobileToggleImg.src = "/static/img/toggle-light.png";
-                    mobileToggleImg.alt = "Light";
-                } else {
-                    // 当前亮色 → 图标应该显示 Dark
-                    mobileToggleImg.src = "/static/img/toggle-dark.png";
-                    mobileToggleImg.alt = "Dark";
-                }
-            }
-        } catch (err) {
-            // ignore
-        }
-    }
-
     // 缓存当前主题模式，减少对 localStorage 的访问
     let currentMode = null;
 
@@ -4533,6 +4494,10 @@ html.Night #site-header-logo #LogoMobile {
         } catch {
             return false;
         }
+    }
+
+    function resolveEffectiveMode(mode) {
+        return mode === "auto" ? (isSystemDark() ? "dark" : "light") : mode;
     }
 
     /**
@@ -4581,10 +4546,7 @@ html.Night #site-header-logo #LogoMobile {
         const wrapper = document.getElementById("Wrapper"); // ★ 新增
 
         // 仅在 auto 模式下检测一次系统主题，避免重复调用 matchMedia
-        let effectiveMode = mode;
-        if (mode === "auto") {
-            effectiveMode = isSystemDark() ? "dark" : "light";
-        }
+        let effectiveMode = resolveEffectiveMode(mode);
 
         // The `isDark` value should be determined by the application to the main element (html)
         // and then used for the return value.
@@ -4785,7 +4747,6 @@ html.Night #site-header-logo #LogoMobile {
         const current = currentMode || getSavedMode();
         const isDark = ensureThemeOnBothElements(current);
         updateToggleButtons(current, isDark);
-        // syncNativeNight(isDark); // 彻底封印：防止初始化时触发原生主题切换
 
         // 定义主题选项
         const themeOptions = [
@@ -4851,7 +4812,6 @@ html.Night #site-header-logo #LogoMobile {
                     dark = ensureThemeOnBothElements(next);
 
                     updateToggleButtons(next, dark);
-                    // syncNativeNight(dark); // 暂时屏蔽：用户反馈可能导致页面抖动/冲突
 
                     // 关闭菜单
                     menuEl.classList.remove("show");
@@ -4949,7 +4909,7 @@ html.Night #site-header-logo #LogoMobile {
                 if ((currentMode || getSavedMode()) === "auto") {
                     const dark = ensureThemeOnBothElements("auto");
                     updateToggleButtons("auto", dark);
-                    // syncNativeNight(dark); // 屏蔽原生同步，防止页面乱跳
+                    syncNativeNight("auto");
                 }
             });
         }
@@ -4958,15 +4918,32 @@ html.Night #site-header-logo #LogoMobile {
     // ========= 3. 尽可能早地应用主题，减少“先默认再变色”的闪一下 =========
 
     // 初始化当前主题模式并尽可能早地应用，减少"先默认再变色"的闪烁
-    // 同步原生夜间模式状态（仅本地处理，不再发送服务端请求）
+    // 同步 V2EX 原生夜间偏好，避免后续导航继续由服务端输出浅色首屏。
     function syncNativeNight(mode) {
-        // 判断用户期望状态
-        let wantDark = mode === "dark";
-        if (mode === "auto") {
-            wantDark =
-                window.matchMedia &&
-                window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const effectiveMode = resolveEffectiveMode(mode);
+        const wantDark = effectiveMode === "dark";
+        const target = wantDark ? 1 : 0;
+        const current = detectServerNativeNight();
+        if (current === null) {
+            if (nativeNightSyncAttempts < 20) {
+                nativeNightSyncAttempts += 1;
+                if (nativeNightSyncTimer) clearTimeout(nativeNightSyncTimer);
+                nativeNightSyncTimer = setTimeout(() => {
+                    nativeNightSyncTimer = null;
+                    syncNativeNight(currentMode || mode);
+                }, 150);
+            }
+            if (!nativeNightSyncReadyBound && document.readyState === "loading") {
+                nativeNightSyncReadyBound = true;
+                document.addEventListener(
+                    "DOMContentLoaded",
+                    () => syncNativeNight(currentMode || mode),
+                    { once: true },
+                );
+            }
+            return;
         }
+        nativeNight = current;
 
         // 1. 处理代码高亮 CSS
         const nativeLink = document.querySelector(
@@ -4999,7 +4976,16 @@ html.Night #site-header-logo #LogoMobile {
             }
         }
 
-        // 注意：不再向服务端发送 fetch 请求，避免与原生主题系统冲突导致页面抖动
+        // 3. 同步 V2EX 服务端偏好。否则每次新页面仍会先输出 SITE_NIGHT=0 的浅色 HTML。
+        if (current !== target) {
+            nativeNight = target;
+            fetch("/settings/night/toggle", {
+                method: "GET",
+                credentials: "include",
+                cache: "no-store",
+                redirect: "manual",
+            }).catch(() => { });
+        }
     }
 
     currentMode = getSavedMode();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.4
+// @version      3.5.5
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -70,6 +70,11 @@ if (typeof GM_addStyle === "undefined") {
         dark: "#1c2128",
         dawn: "#faf4ed",
         aqua: "#f2f7fa",
+    };
+    const rememberInitialNativeNight = (value) => {
+        if (typeof window.__V2P_INITIAL_NATIVE_NIGHT__ !== "number") {
+            window.__V2P_INITIAL_NATIVE_NIGHT__ = value ? 1 : 0;
+        }
     };
 
     let effectiveMode = currentMode;
@@ -373,6 +378,7 @@ if (typeof GM_addStyle === "undefined") {
         if (wrapper) {
             // 记录原生状态供参考，但不再自动修改用户设置
             const isNativeDark = wrapper.classList.contains("Night");
+            rememberInitialNativeNight(isNativeDark ? 1 : 0);
             window.__V2P_NATIVE_NIGHT__ = isNativeDark ? 1 : 0;
 
             // 插件完全控制主题：根据用户设置来决定是否添加/移除 Night 类
@@ -402,6 +408,12 @@ if (typeof GM_addStyle === "undefined") {
                 // 拦截包含 SITE_NIGHT 的 script
                 if (node.tagName === "SCRIPT" && node.textContent) {
                     if (node.textContent.includes("SITE_NIGHT")) {
+                        if (node.textContent.includes("SITE_NIGHT = 0")) {
+                            rememberInitialNativeNight(0);
+                        } else if (node.textContent.includes("SITE_NIGHT = 1")) {
+                            rememberInitialNativeNight(1);
+                        }
+
                         // 根据插件设置决定是否需要修改
                         const wantDark = effectiveMode === "dark";
                         if (wantDark && node.textContent.includes("SITE_NIGHT = 0")) {
@@ -427,6 +439,11 @@ if (typeof GM_addStyle === "undefined") {
                 if (node.tagName === "LINK" && node.rel === "stylesheet") {
                     const href = node.href || "";
                     const wantDark = effectiveMode === "dark";
+                    if (href.includes("tomorrow-night.css")) {
+                        rememberInitialNativeNight(1);
+                    } else if (href.includes("tomorrow.css")) {
+                        rememberInitialNativeNight(0);
+                    }
 
                     if (!wantDark && href.includes("tomorrow-night.css")) {
                         // 用户想要浅色但注入了深色高亮 CSS，替换为浅色版本
@@ -4434,6 +4451,13 @@ html.Night #site-header-logo #LogoMobile {
     function detectServerNativeNight() {
         if (
             typeof window !== "undefined" &&
+            typeof window.__V2P_INITIAL_NATIVE_NIGHT__ === "number"
+        ) {
+            return window.__V2P_INITIAL_NATIVE_NIGHT__ === 1 ? 1 : 0;
+        }
+
+        if (
+            typeof window !== "undefined" &&
             typeof window.__V2P_NATIVE_NIGHT__ === "number"
         ) {
             return window.__V2P_NATIVE_NIGHT__ === 1 ? 1 : 0;
@@ -4571,11 +4595,9 @@ html.Night #site-header-logo #LogoMobile {
             return raw;
         }
 
-        // 本地没有记录时，根据站点原生 SITE_NIGHT 决定初始模式：
-        // SITE_NIGHT = 1 → 我们默认用 v2p-theme-dark-default
-        // SITE_NIGHT = 0 → 默认用 v2p-theme-light-default
-        const native = detectNativeNight();
-        currentMode = native === 1 ? "dark" : "light";
+        // 本地没有记录时跟随系统，而不是跟随 V2EX 当前服务端主题。
+        // 否则系统深色 + V2EX 原生浅色会被永久落成插件浅色。
+        currentMode = "auto";
         try {
             localStorage.setItem(STORAGE_KEY, currentMode);
         } catch (e) { }
@@ -4886,7 +4908,6 @@ html.Night #site-header-logo #LogoMobile {
 
                     currentMode = next;
                     localStorage.setItem(STORAGE_KEY, next);
-                    syncNativeNight(next);
 
                     let dark = false;
                     // 如果是 auto，需要实时计算
@@ -4909,6 +4930,7 @@ html.Night #site-header-logo #LogoMobile {
                     dark = ensureThemeOnBothElements(next);
 
                     updateToggleButtons(next, dark);
+                    syncNativeNight(next);
 
                     // 关闭菜单
                     menuEl.classList.remove("show");
@@ -5076,11 +5098,11 @@ html.Night #site-header-logo #LogoMobile {
         // 3. 同步 V2EX 服务端偏好。否则每次新页面仍会先输出 SITE_NIGHT=0 的浅色 HTML。
         if (current !== target) {
             nativeNight = target;
+            window.__V2P_INITIAL_NATIVE_NIGHT__ = target;
             fetch("/settings/night/toggle", {
                 method: "GET",
                 credentials: "include",
                 cache: "no-store",
-                redirect: "manual",
             }).catch(() => { });
         }
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.5
+// @version      3.5.6
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -4440,6 +4440,8 @@ html.Night #site-header-logo #LogoMobile {
     const THEME_MODES = ["light", "dawn", "aqua", "dark", "auto"];
 
     const STORAGE_KEY = "user_preferred_theme_mode";
+    const NATIVE_NIGHT_SYNC_TARGET_KEY = "v2p_native_night_sync_target";
+    const NATIVE_NIGHT_SYNC_AT_KEY = "v2p_native_night_sync_at";
     const TOGGLE_SELECTOR = ".v2p-color-mode-toggle";
 
     // 记录站点原生的 SITE_NIGHT（0: 浅色, 1: 深色）
@@ -4617,6 +4619,56 @@ html.Night #site-header-logo #LogoMobile {
 
     function resolveEffectiveMode(mode) {
         return mode === "auto" ? (isSystemDark() ? "dark" : "light") : mode;
+    }
+
+    function fetchV2exOnce() {
+        try {
+            const cached = window.V2EX && window.V2EX.once;
+            if (cached && cached.value && Date.now() < cached.refreshAfter) {
+                return Promise.resolve(cached.value);
+            }
+        } catch (e) { }
+
+        try {
+            if (window.lscache && typeof window.lscache.get === "function") {
+                const cached = window.lscache.get("once");
+                if (cached && cached.value && Date.now() < cached.refreshAfter) {
+                    return Promise.resolve(cached.value);
+                }
+            }
+        } catch (e) { }
+
+        return fetch("/poll_once", {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+        })
+            .then((response) => {
+                if (!response.ok) return null;
+                return response.text();
+            })
+            .then((text) => {
+                const once = parseInt(text, 10);
+                return Number.isFinite(once) ? once : null;
+            })
+            .catch(() => null);
+    }
+
+    function shouldRetryNativeNightSync(target) {
+        try {
+            const lastTarget = Number(localStorage.getItem(NATIVE_NIGHT_SYNC_TARGET_KEY));
+            const lastAt = Number(localStorage.getItem(NATIVE_NIGHT_SYNC_AT_KEY)) || 0;
+            return lastTarget !== target || Date.now() - lastAt > 30 * 60 * 1000;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function markNativeNightSync(target) {
+        try {
+            localStorage.setItem(NATIVE_NIGHT_SYNC_TARGET_KEY, String(target));
+            localStorage.setItem(NATIVE_NIGHT_SYNC_AT_KEY, String(Date.now()));
+        } catch (e) { }
     }
 
     /**
@@ -5097,13 +5149,24 @@ html.Night #site-header-logo #LogoMobile {
 
         // 3. 同步 V2EX 服务端偏好。否则每次新页面仍会先输出 SITE_NIGHT=0 的浅色 HTML。
         if (current !== target) {
+            if (!shouldRetryNativeNightSync(target)) return;
+
             nativeNight = target;
             window.__V2P_INITIAL_NATIVE_NIGHT__ = target;
-            fetch("/settings/night/toggle", {
-                method: "GET",
-                credentials: "include",
-                cache: "no-store",
-            }).catch(() => { });
+
+            fetchV2exOnce()
+                .then((once) => {
+                    if (!once) return null;
+                    return fetch(`/settings/night/toggle?once=${encodeURIComponent(once)}`, {
+                        method: "GET",
+                        credentials: "include",
+                        cache: "no-store",
+                    });
+                })
+                .then((response) => {
+                    if (response && response.ok) markNativeNightSync(target);
+                })
+                .catch(() => { });
         }
     }
 

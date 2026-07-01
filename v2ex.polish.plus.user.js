@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - plus
 // @namespace    https://v2ex.com/
-// @version      3.5.1
+// @version      3.5.2
 // @description  V2EX Plus userscript port of plus.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -366,6 +366,89 @@
     }
   };
   window.v2pShowToast = v2pShowToast;
+
+  const removeBuiltInAds = (() => {
+    const proSelectors = [
+      "#pro-campaign-container",
+      ".pro-unit-title",
+      ".pro-unit-img",
+      ".pro-unit-description",
+      ".pro-unit-cta-container",
+      ".pro-unit-from",
+    ];
+
+    const removeElement = (el) => {
+      if (el && el.parentNode) el.remove();
+    };
+
+    const removeProCampaign = (root) => {
+      const scope = root && root.querySelectorAll ? root : document;
+      proSelectors.forEach((selector) => {
+        scope.querySelectorAll(selector).forEach((el) => {
+          removeElement(el.id === "pro-campaign-container" ? el : el.closest(".box") || el);
+        });
+      });
+
+      if (
+        root &&
+        root.nodeType === 1 &&
+        (root.id === "pro-campaign-container" ||
+          proSelectors.some((selector) => root.matches && root.matches(selector)))
+      ) {
+        removeElement(root.id === "pro-campaign-container" ? root : root.closest(".box") || root);
+      }
+    };
+
+    const isGoogleAdScript = (el) =>
+      el &&
+      el.tagName === "SCRIPT" &&
+      /pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/i.test(el.src || "");
+
+    const removeGoogleAd = (root) => {
+      const scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll("ins.adsbygoogle").forEach((ins) => {
+        removeElement(ins.parentElement || ins);
+      });
+      scope.querySelectorAll('script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]').forEach((script) => {
+        removeElement(script.parentElement && script.parentElement.querySelector("ins.adsbygoogle") ? script.parentElement : script);
+      });
+
+      if (root && root.nodeType === 1) {
+        if (root.matches && root.matches("ins.adsbygoogle")) {
+          removeElement(root.parentElement || root);
+        } else if (isGoogleAdScript(root)) {
+          removeElement(root.parentElement && root.parentElement.querySelector("ins.adsbygoogle") ? root.parentElement : root);
+        }
+      }
+    };
+
+    return (root) => {
+      removeProCampaign(root);
+      removeGoogleAd(root);
+    };
+  })();
+
+  removeBuiltInAds(document);
+
+  const builtInAdsObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === 1) removeBuiltInAds(node);
+      });
+    });
+  });
+
+  const observeBuiltInAds = () => {
+    const target = document.body || document.documentElement;
+    if (target) {
+      builtInAdsObserver.observe(target, { childList: true, subtree: true });
+    }
+  };
+
+  observeBuiltInAds();
+  if (!document.body) {
+    document.addEventListener("DOMContentLoaded", observeBuiltInAds, { once: true });
+  }
 
   // 前台自动签到
   const CHECKIN_DATE_KEY = "v2p_checkin_date";
@@ -2363,6 +2446,8 @@ var init_common = __esm({
           .addClass("v2p-hide-account");
         $infoCard.find(".balance_area").addClass("v2p-hide-balance");
       }
+      window.__V2P_LOGO_READY__ = true;
+      window.dispatchEvent(new CustomEvent("v2p:logo-ready"));
     })();
   },
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.9
+// @version      3.5.10
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -102,32 +102,12 @@ if (typeof GM_addStyle === "undefined") {
     const logoStabilizerStyle = document.createElement("style");
     logoStabilizerStyle.id = "v2p-logo-stabilizer";
     logoStabilizerStyle.textContent = `
-        :root:not(.v2p-logo-ready) #Logo,
-        :root:not(.v2p-logo-ready) #LogoMobile {
-            visibility: hidden !important;
-        }
-        :root:not(.v2p-logo-ready) #Top a:has(#Logo),
-        :root:not(.v2p-logo-ready) #site-header-logo {
-            min-width: 130px !important;
-        }
         #Logo,
         #LogoMobile {
             transition: none !important;
         }
     `;
     docEl.appendChild(logoStabilizerStyle);
-
-    const markLogoReady = () => {
-        docEl.classList.add("v2p-logo-ready");
-        window.removeEventListener("v2p:logo-ready", markLogoReady);
-    };
-
-    if (window.__V2P_LOGO_READY__) {
-        markLogoReady();
-    } else {
-        window.addEventListener("v2p:logo-ready", markLogoReady);
-        setTimeout(markLogoReady, 2000);
-    }
 
     const navigationCoverStyle = document.createElement("style");
     navigationCoverStyle.id = "v2p-navigation-cover-style";

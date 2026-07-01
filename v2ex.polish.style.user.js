@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.10
+// @version      3.5.11
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -98,6 +98,14 @@ if (typeof GM_addStyle === "undefined") {
 
     const initBg = THEME_BG_MAP[effectiveMode] || THEME_BG_MAP.light;
     const initColorScheme = effectiveMode === "dark" ? "dark" : "light";
+    const NAV_COVER_KEY = "v2p_navigation_cover_until";
+    const shouldKeepNavigationCover = () => {
+        try {
+            return Number(sessionStorage.getItem(NAV_COVER_KEY) || 0) > Date.now();
+        } catch {
+            return false;
+        }
+    };
 
     const logoStabilizerStyle = document.createElement("style");
     logoStabilizerStyle.id = "v2p-logo-stabilizer";
@@ -120,6 +128,7 @@ if (typeof GM_addStyle === "undefined") {
             pointer-events: none !important;
             opacity: 0;
             visibility: hidden;
+            transition: none !important;
         }
         :root.v2p-navigating,
         :root.v2p-navigating body {
@@ -131,6 +140,9 @@ if (typeof GM_addStyle === "undefined") {
         }
     `;
     docEl.appendChild(navigationCoverStyle);
+    if (shouldKeepNavigationCover()) {
+        docEl.classList.add("v2p-navigating");
+    }
     antiFlashStyle.textContent = `
         :root:not(.v2p-loaded),
         :root:not(.v2p-loaded) body {
@@ -199,7 +211,11 @@ if (typeof GM_addStyle === "undefined") {
     };
 
     const showNavigationCover = () => {
-        if (effectiveMode !== "dark") return;
+        try {
+            sessionStorage.setItem(NAV_COVER_KEY, String(Date.now() + 8000));
+        } catch {
+            // ignore
+        }
         let cover = document.getElementById("v2p-navigation-cover");
         if (!cover) {
             cover = document.createElement("div");
@@ -215,6 +231,11 @@ if (typeof GM_addStyle === "undefined") {
 
     const hideNavigationCover = () => {
         docEl.classList.remove("v2p-navigating");
+        try {
+            sessionStorage.removeItem(NAV_COVER_KEY);
+        } catch {
+            // ignore
+        }
     };
 
     document.addEventListener(
@@ -243,7 +264,11 @@ if (typeof GM_addStyle === "undefined") {
     );
     window.addEventListener("beforeunload", showNavigationCover);
     window.addEventListener("pagehide", showNavigationCover);
-    window.addEventListener("pageshow", hideNavigationCover);
+    window.addEventListener("pageshow", () => {
+        if (document.documentElement.classList.contains("v2p-loaded")) {
+            hideNavigationCover();
+        }
+    });
 
     /**
      * 即时同步 theme-color
@@ -394,10 +419,11 @@ if (typeof GM_addStyle === "undefined") {
 
         docEl.classList.add("v2p-loaded");
         docEl.style.visibility = "visible";
+        hideNavigationCover();
     };
 
-    // Safety timeout: remove after 2s max just in case
-    setTimeout(removeLoader, 2000);
+    // Safety timeout: remove after 1.2s max just in case
+    setTimeout(removeLoader, 1200);
 
     // Save for later removal in main execution
     window.__V2P_REMOVE_LOADER__ = removeLoader;

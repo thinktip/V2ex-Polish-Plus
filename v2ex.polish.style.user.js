@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.8
+// @version      3.5.9
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -2536,7 +2536,7 @@ html.v2p-theme-dark-default body #Logo,
 :root .v2p-theme-dark-default #Logo,
 :root[data-darkreader-scheme="dark"] body #Logo,
 :root body:has(#Wrapper.Night) #Logo {
-    background-image: url("https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/refs/heads/main/v2ex-alt%402x.svg");
+    filter: invert(1) brightness(0.9) contrast(0.9);
 }
 
 html.v2p-theme-dark-default::selection,
@@ -2766,7 +2766,7 @@ html.v2p-theme-dark-default #search-container::before,
         visibility: visible;
     }
     :root #Wrapper.Night #Logo {
-        background-image: url("https://www.v2ex.com/static/img/v2ex-alt@2x.png");
+        filter: invert(1) brightness(0.9) contrast(0.9);
     }
     :root #Wrapper.Night::selection {
         color: var(--v2p-color-background, #1c2128);

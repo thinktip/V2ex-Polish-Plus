@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - style
 // @namespace    https://v2ex.com/
-// @version      3.5.11
+// @version      3.5.12
 // @description  V2EX Plus userscript port of style.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -5355,7 +5355,6 @@ html.Night #site-header-logo #LogoMobile {
         if (wrapper) {
             let reapplyScheduled = false;
             const mo = new MutationObserver(() => {
-                // 使用 requestAnimationFrame 做简单节流，避免频繁重复执行
                 if (reapplyScheduled) return;
                 reapplyScheduled = true;
                 (window.requestAnimationFrame || setTimeout)(() => {
@@ -5364,8 +5363,8 @@ html.Night #site-header-logo #LogoMobile {
                 });
             });
             mo.observe(wrapper, {
-                childList: true,
-                subtree: true,
+                attributes: true,
+                attributeFilter: ["class"],
             });
         }
     });

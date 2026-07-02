@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Plus - plus
 // @namespace    https://v2ex.com/
-// @version      3.5.2
+// @version      3.5.3
 // @description  V2EX Plus userscript port of plus.js
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -368,63 +368,41 @@
   window.v2pShowToast = v2pShowToast;
 
   const removeBuiltInAds = (() => {
-    const proSelectors = [
+    const adSelector = [
       "#pro-campaign-container",
       ".pro-unit-title",
       ".pro-unit-img",
       ".pro-unit-description",
       ".pro-unit-cta-container",
       ".pro-unit-from",
-    ];
+      "ins.adsbygoogle",
+      'script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]',
+    ].join(",");
 
     const removeElement = (el) => {
       if (el && el.parentNode) el.remove();
     };
 
-    const removeProCampaign = (root) => {
-      const scope = root && root.querySelectorAll ? root : document;
-      proSelectors.forEach((selector) => {
-        scope.querySelectorAll(selector).forEach((el) => {
-          removeElement(el.id === "pro-campaign-container" ? el : el.closest(".box") || el);
-        });
-      });
-
-      if (
-        root &&
-        root.nodeType === 1 &&
-        (root.id === "pro-campaign-container" ||
-          proSelectors.some((selector) => root.matches && root.matches(selector)))
-      ) {
-        removeElement(root.id === "pro-campaign-container" ? root : root.closest(".box") || root);
+    const getRemovalTarget = (el) => {
+      if (!el) return null;
+      if (el.id === "pro-campaign-container") return el;
+      if (el.matches && el.matches("ins.adsbygoogle")) return el.parentElement || el;
+      if (el.tagName === "SCRIPT") {
+        return el.parentElement && el.parentElement.querySelector("ins.adsbygoogle")
+          ? el.parentElement
+          : el;
       }
-    };
-
-    const isGoogleAdScript = (el) =>
-      el &&
-      el.tagName === "SCRIPT" &&
-      /pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/i.test(el.src || "");
-
-    const removeGoogleAd = (root) => {
-      const scope = root && root.querySelectorAll ? root : document;
-      scope.querySelectorAll("ins.adsbygoogle").forEach((ins) => {
-        removeElement(ins.parentElement || ins);
-      });
-      scope.querySelectorAll('script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]').forEach((script) => {
-        removeElement(script.parentElement && script.parentElement.querySelector("ins.adsbygoogle") ? script.parentElement : script);
-      });
-
-      if (root && root.nodeType === 1) {
-        if (root.matches && root.matches("ins.adsbygoogle")) {
-          removeElement(root.parentElement || root);
-        } else if (isGoogleAdScript(root)) {
-          removeElement(root.parentElement && root.parentElement.querySelector("ins.adsbygoogle") ? root.parentElement : root);
-        }
-      }
+      return el.closest(".box") || el;
     };
 
     return (root) => {
-      removeProCampaign(root);
-      removeGoogleAd(root);
+      const scope = root && root.querySelectorAll ? root : document;
+      if (root && root.nodeType === 1 && root.matches && root.matches(adSelector)) {
+        removeElement(getRemovalTarget(root));
+      }
+      scope.querySelectorAll(adSelector).forEach((el) => {
+        removeElement(getRemovalTarget(el));
+      });
     };
   })();
 
@@ -6480,6 +6458,16 @@ runAfterLoaded(() => {
     }
   }
 
+  let replaceIconsScheduled = false;
+  const scheduleReplaceIcons = () => {
+    if (replaceIconsScheduled) return;
+    replaceIconsScheduled = true;
+    requestAnimationFrame(() => {
+      replaceIconsScheduled = false;
+      replaceIcons(document);
+    });
+  };
+
   // 初次执行
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => replaceIcons());
@@ -6495,11 +6483,12 @@ runAfterLoaded(() => {
   // 监听后续插入
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
-      m.addedNodes.forEach((node) => {
+      for (const node of m.addedNodes) {
         if (node.nodeType === 1) {
-          replaceIcons(node);
+          scheduleReplaceIcons();
+          return;
         }
-      });
+      }
     }
   });
 
@@ -6612,15 +6601,25 @@ runAfterLoaded(() => {
     });
   }
 
+  let notificationCheckScheduled = false;
+  const scheduleCheckUnreadNotifications = () => {
+    if (notificationCheckScheduled) return;
+    notificationCheckScheduled = true;
+    requestAnimationFrame(() => {
+      notificationCheckScheduled = false;
+      checkUnreadNotifications();
+    });
+  };
+
   // 初次执行
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", checkUnreadNotifications);
+    document.addEventListener("DOMContentLoaded", scheduleCheckUnreadNotifications);
   } else {
-    checkUnreadNotifications();
+    scheduleCheckUnreadNotifications();
   }
 
   // 监听动态变化
-  const observer = new MutationObserver(checkUnreadNotifications);
+  const observer = new MutationObserver(scheduleCheckUnreadNotifications);
   if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
   } else {
@@ -7197,8 +7196,18 @@ runAfterLoaded(() => {
     replaceClearTextWithIcon();
   }
 
+  let clearTextReplaceScheduled = false;
+  const scheduleReplaceClearTextWithIcon = () => {
+    if (clearTextReplaceScheduled) return;
+    clearTextReplaceScheduled = true;
+    requestAnimationFrame(() => {
+      clearTextReplaceScheduled = false;
+      replaceClearTextWithIcon();
+    });
+  };
+
   // 监听动态变化（v2ex 可能会动态加载内容）
-  const observer = new MutationObserver(replaceClearTextWithIcon);
+  const observer = new MutationObserver(scheduleReplaceClearTextWithIcon);
   if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
   } else {

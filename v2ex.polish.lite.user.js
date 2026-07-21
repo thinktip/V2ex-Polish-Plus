@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.7.4
+// @version      0.8.0
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -21,6 +21,7 @@
   const PREPAINT_STYLE_ID = "v2p-lite-prepaint-style";
   const THEME_META_ID = "v2p-lite-theme-color";
   const TOGGLE_ID = "v2p-lite-theme-toggle";
+  const NATIVE_TOGGLE_SELECTOR = 'a[href*="/settings/night/toggle"]';
   const NAV_STORAGE_KEY = "v2p_nav_config";
   const LAST_TAB_STORAGE_KEY = "v2p_last_tab_id";
   const MODES = ["light", "dark", "auto"];
@@ -38,7 +39,8 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path></svg>',
     dark:
       '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>',
-    auto: '<span aria-hidden="true" style="font-size:12px;font-weight:600;line-height:1;">A</span>',
+    auto:
+      '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"></rect><line x1="8" x2="16" y1="21" y2="21"></line><line x1="12" x2="12" y1="17" y2="21"></line></svg>',
   };
   const IMGUR_CLIENT_IDS = [
     "3107b9ef8b316f3",
@@ -2630,6 +2632,9 @@ background-color: var(--v2p-color-bg-block);
   let bootObserver = null;
   let applyScheduled = false;
   let nestedReplyApplied = false;
+  let nativeNight = null;
+  let nativeToggleOnceUsed = false;
+  let nativeNightSyncQueue = Promise.resolve();
 
   docEl.classList.add("v2p-tabs-pending");
   applyThemeClasses(effectiveMode);
@@ -2640,6 +2645,7 @@ background-color: var(--v2p-color-bg-block);
   onReady(() => {
     applyTheme();
     ensureToggle();
+    void syncNativeNight(currentMode);
     initNodeNavigation();
     initReplyActionIcons();
     initImageUpload();
@@ -2648,6 +2654,7 @@ background-color: var(--v2p-color-bg-block);
   window.addEventListener("pageshow", () => {
     applyTheme();
     ensureToggle();
+    void syncNativeNight(currentMode);
     initNodeNavigation();
     initReplyActionIcons();
     initImageUpload();
@@ -2693,6 +2700,113 @@ background-color: var(--v2p-color-bg-block);
 
   function resolveMode(mode) {
     return normalizeMode(mode) === "auto" ? (isSystemDark() ? "dark" : "light") : mode;
+  }
+
+  function detectNativeNight() {
+    if (nativeNight !== null) return nativeNight;
+
+    try {
+      if (typeof window.SITE_NIGHT === "number") {
+        nativeNight = window.SITE_NIGHT === 1 ? 1 : 0;
+        return nativeNight;
+      }
+    } catch (error) {
+      // SITE_NIGHT may not be exposed to the userscript world.
+    }
+
+    try {
+      const scripts = document.querySelectorAll("script");
+      for (const script of scripts) {
+        const match = (script.textContent || "").match(/SITE_NIGHT\s*=\s*(\d)/);
+        if (match) {
+          nativeNight = Number(match[1]) === 1 ? 1 : 0;
+          return nativeNight;
+        }
+      }
+
+      const nativeToggleImage = document.querySelector(NATIVE_TOGGLE_SELECTOR + " img");
+      if (nativeToggleImage) {
+        const src = nativeToggleImage.getAttribute("src") || "";
+        const alt = (nativeToggleImage.getAttribute("alt") || "").toLowerCase();
+        if (src.includes("toggle-light") || alt.includes("light")) {
+          nativeNight = 1;
+          return nativeNight;
+        }
+        if (src.includes("toggle-dark") || alt.includes("dark")) {
+          nativeNight = 0;
+          return nativeNight;
+        }
+      }
+    } catch (error) {
+      // Leave the state unknown instead of risking an inverted server toggle.
+    }
+
+    return null;
+  }
+
+  async function getV2exOnce() {
+    if (!nativeToggleOnceUsed) {
+      const nativeToggle = document.querySelector(NATIVE_TOGGLE_SELECTOR);
+      const href = nativeToggle && nativeToggle.getAttribute("href");
+      if (href) {
+        try {
+          const once = new URL(href, window.location.origin).searchParams.get("once");
+          if (once) {
+            nativeToggleOnceUsed = true;
+            return once;
+          }
+        } catch (error) {
+          // Fall through to /poll_once.
+        }
+      }
+    }
+
+    const response = await fetch("/poll_once", {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("Unable to fetch V2EX once token");
+
+    const once = Number.parseInt(await response.text(), 10);
+    if (!Number.isFinite(once)) throw new Error("Invalid V2EX once token");
+    return String(once);
+  }
+
+  function updateNativeToggleIndicator(target) {
+    const image = document.querySelector(NATIVE_TOGGLE_SELECTOR + " img");
+    if (!image) return;
+
+    const nextMode = target === 1 ? "light" : "dark";
+    image.setAttribute("src", "/static/img/toggle-" + nextMode + ".png");
+    image.setAttribute("alt", nextMode === "light" ? "Light" : "Dark");
+  }
+
+  function syncNativeNight(mode) {
+    const target = resolveMode(mode) === "dark" ? 1 : 0;
+
+    nativeNightSyncQueue = nativeNightSyncQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const current = detectNativeNight();
+        if (current === null || current === target) return;
+
+        const once = await getV2exOnce();
+        const response = await fetch("/settings/night/toggle?once=" + encodeURIComponent(once), {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Unable to sync V2EX native theme");
+
+        nativeNight = target;
+        updateNativeToggleIndicator(target);
+      })
+      .catch((error) => {
+        console.warn("V2EX Polish Lite native theme sync failed:", error);
+      });
+
+    return nativeNightSyncQueue;
   }
 
   function clearThemeClasses(el) {
@@ -3762,6 +3876,7 @@ background-color: var(--v2p-color-bg-block);
     const next = MODES[(index + 1 + MODES.length) % MODES.length];
     writeMode(next);
     applyTheme();
+    void syncNativeNight(currentMode);
   }
 
   function bindEvents() {
@@ -3784,7 +3899,10 @@ background-color: var(--v2p-color-bg-block);
     try {
       const media = window.matchMedia("(prefers-color-scheme: dark)");
       const onChange = () => {
-        if (currentMode === "auto") applyTheme();
+        if (currentMode === "auto") {
+          applyTheme();
+          void syncNativeNight(currentMode);
+        }
       };
       if (typeof media.addEventListener === "function") {
         media.addEventListener("change", onChange);

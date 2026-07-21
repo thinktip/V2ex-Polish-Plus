@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.8.0
+// @version      0.8.1
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -2294,8 +2294,9 @@ color: var(--v2p-color-foreground);
 border-color: var(--v2p-color-border-darker);
 }
 
-#Rightbar .cell:has(.light-toggle) {
-font-size: 13px;
+#Rightbar .fr:has(a.light-toggle[href*="/settings/night/toggle"]),
+a.light-toggle[href*="/settings/night/toggle"] {
+display: none !important;
 }
 
 #Rightbar .box .item_node {
@@ -2780,6 +2781,15 @@ background-color: var(--v2p-color-bg-block);
     const nextMode = target === 1 ? "light" : "dark";
     image.setAttribute("src", "/static/img/toggle-" + nextMode + ".png");
     image.setAttribute("alt", nextMode === "light" ? "Light" : "Dark");
+  }
+
+  function hideNativeThemeToggle() {
+    document.querySelectorAll(NATIVE_TOGGLE_SELECTOR).forEach((link) => {
+      const container = link.closest(".fr");
+      const target = container || link;
+      target.hidden = true;
+      target.setAttribute("aria-hidden", "true");
+    });
   }
 
   function syncNativeNight(mode) {
@@ -3854,6 +3864,7 @@ background-color: var(--v2p-color-bg-block);
       document.body.appendChild(toggle);
     }
 
+    hideNativeThemeToggle();
     updateToggle();
   }
 

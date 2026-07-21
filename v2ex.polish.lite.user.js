@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.8.4
+// @version      0.8.5
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -22,6 +22,14 @@
   const THEME_META_ID = "v2p-lite-theme-color";
   const TOGGLE_ID = "v2p-lite-theme-toggle";
   const NATIVE_TOGGLE_SELECTOR = 'a[href*="/settings/night/toggle"]';
+  const STRUCTURE_MARKER_SELECTOR = [
+    "#Singleton",
+    '#Main form[action="/write"]',
+    "#Main #syntax-selector",
+    "#Main #reply-box > .cell form",
+    "#Main #notifications .payload .embedded_video_wrapper",
+    '.box a[href^="/advertise"]',
+  ].join(",");
   const NAV_STORAGE_KEY = "v2p_nav_config";
   const LAST_TAB_STORAGE_KEY = "v2p_last_tab_id";
   const MODES = ["light", "dark", "auto"];
@@ -239,8 +247,7 @@ background-color: #22272e !important;
     background-color: var(--v2p-color-background);
 }
 
-:root body.v2p-theme-light-default,
-:root body .v2p-theme-light-default {
+html.v2p-theme-light-default body {
 --v2p-color-main-50: #f7f9fb;
     --v2p-color-main-100: #f2f2f2;
     --v2p-color-main-200: #ececec;
@@ -738,7 +745,7 @@ background-color: var(--v2p-color-button-background-hover);
 background-color: var(--box-background-hover-color);
 }
 
-body #Wrapper:has(#Singleton) {
+body #Wrapper.v2p-has-singleton {
 padding: 20px 0 0;
 }
 
@@ -756,7 +763,7 @@ box-shadow: none !important;
     display:none;
 }
 
-body #Wrapper:has(#Singleton) #Singleton {
+body #Wrapper.v2p-has-singleton #Singleton {
 overflow: hidden;
     box-shadow: var(--v2p-box-shadow);
 }
@@ -1678,36 +1685,36 @@ background-image: none !important;
 padding: 15px 5px;
 }
 
-#Main .box:has(form[action="/write"]) .cell:nth-child(1),
-#Main .box:has(form[action="/write"]) .cell:nth-child(2) {
+#Main .box.v2p-write-box .cell:nth-child(1),
+#Main .box.v2p-write-box .cell:nth-child(2) {
 border: none;
 }
 
-#Main .box:has(form[action="/write"]) .cell:has(#syntax-selector) {
+#Main .box.v2p-write-box .cell.v2p-syntax-cell {
 padding: 8px 0 !important;
 }
 
 #Main
-.box:has(form[action="/write"])
-.cell:has(#syntax-selector)
+.box.v2p-write-box
+.cell.v2p-syntax-cell
 .tab-alt-container {
 gap: 0 8px;
 }
 
-#Main .box:has(form[action="/write"]) .cell:has(#syntax-selector) .tab-alt {
+#Main .box.v2p-write-box .cell.v2p-syntax-cell .tab-alt {
 padding: 4px 2px;
     border-bottom-width: 2px;
     transition: none;
 }
 
 #Main
-.box:has(form[action="/write"])
-.cell:has(#syntax-selector)
+.box.v2p-write-box
+.cell.v2p-syntax-cell
 .tab-alt:not(.active):hover {
 border-color: rgba(0, 0, 0, 0);
 }
 
-#Main .box:has(form[action="/write"]) .cell#preview {
+#Main .box.v2p-write-box .cell#preview {
 padding: 2px 5px;
 }
 
@@ -1833,10 +1840,8 @@ font-size: 15px;
 width: 30px;
 }
 
-#Main .box > .cell[id^="r"]:not(:has(.cell[id^="r"])) .reply_content,
-#Main
-> .cell[id^="r"]:not(:has(.cell[id^="r"]))
-.reply_content {
+#Main .box > .cell[id^="r"].v2p-reply-leaf .reply_content,
+#Main > .cell[id^="r"].v2p-reply-leaf .reply_content {
 padding-bottom: 0;
 }
 
@@ -1845,7 +1850,7 @@ padding-bottom: 0;
     background-color: var(--bg-reply);
 }
 
-#Main .cell[id^="r"]:not(:has(+ .cell[id^="r"])) {
+#Main .cell[id^="r"].v2p-reply-last {
 border-bottom: none;
 }
 
@@ -2258,7 +2263,7 @@ padding: 12px 10px;
     border: none;
 }
 
-#Main #reply-box > .cell:has(form) {
+#Main #reply-box > .cell.v2p-reply-form-cell {
 padding-top: 0;
 }
 
@@ -2280,7 +2285,7 @@ color: var(--v2p-color-foreground);
     background-color: var(--v2p-color-bg-block);
 }
 
-#Main #notifications .cell[id^="n"] .payload:has(.embedded_video_wrapper) {
+#Main #notifications .cell[id^="n"] .payload.v2p-has-embedded-video {
 min-width: 50%;
 }
 
@@ -2305,7 +2310,7 @@ color: var(--v2p-color-foreground);
 border-color: var(--v2p-color-border-darker);
 }
 
-#Rightbar .fr:has(a.light-toggle[href*="/settings/night/toggle"]),
+#Rightbar .v2p-native-theme-toggle-container,
 a.light-toggle[href*="/settings/night/toggle"] {
 display: none !important;
 }
@@ -2347,12 +2352,7 @@ color: var(--v2p-color-font-tertiary);
 table-layout: fixed;
 }
 
-html.v2p-theme-dark-default,
-html.v2p-theme-dark-default body,
-:root body.v2p-theme-dark-default,
-:root .v2p-theme-dark-default,
-:root[data-darkreader-scheme="dark"] body,
-:root body:where(:has(#Wrapper.Night)) {
+html.v2p-theme-dark-default body {
 color-scheme: dark;
     --v2p-color-main-50: unset;
     --v2p-color-main-100: #2d333b;
@@ -2415,56 +2415,30 @@ color-scheme: dark;
     visibility: visible;
 }
 
-html.v2p-theme-dark-default #Logo,
-html.v2p-theme-dark-default body #Logo,
-:root body.v2p-theme-dark-default #Logo,
-:root .v2p-theme-dark-default #Logo,
-:root[data-darkreader-scheme="dark"] body #Logo,
-:root body:has(#Wrapper.Night) #Logo {
+html.v2p-theme-dark-default #Logo {
 filter: invert(1) brightness(0.9) contrast(0.9);
 }
 
 html.v2p-theme-dark-default::selection,
-html.v2p-theme-dark-default body::selection,
-:root body.v2p-theme-dark-default::selection,
-:root .v2p-theme-dark-default::selection,
-:root[data-darkreader-scheme="dark"] body::selection,
-:root body:has(#Wrapper.Night)::selection {
+html.v2p-theme-dark-default body::selection {
 color: var(--v2p-color-background, #1c2128);
     background-color: var(--v2p-color-foreground, #adbac7);
 }
 
 html.v2p-theme-dark-default img::selection,
-html.v2p-theme-dark-default body img::selection,
-:root body.v2p-theme-dark-default img::selection,
-:root .v2p-theme-dark-default img::selection,
-:root[data-darkreader-scheme="dark"] body img::selection,
-:root body:has(#Wrapper.Night) img::selection {
+html.v2p-theme-dark-default body img::selection {
 background-color: var(--v2p-color-foreground, #adbac7);
 }
 
-html.v2p-theme-dark-default #Top,
-html.v2p-theme-dark-default body #Top,
-:root body.v2p-theme-dark-default #Top,
-:root .v2p-theme-dark-default #Top,
-:root[data-darkreader-scheme="dark"] body #Top,
-:root body:has(#Wrapper.Night) #Top {
+html.v2p-theme-dark-default #Top {
 background-color: rgba(0, 0, 0, 0);
 }
 
-html.v2p-theme-dark-default #Main .cell .item_title .topic-link,
-:root body.v2p-theme-dark-default #Main .cell .item_title .topic-link,
-:root .v2p-theme-dark-default #Main .cell .item_title .topic-link,
-:root[data-darkreader-scheme="dark"] body #Main .cell .item_title .topic-link,
-:root body:has(#Wrapper.Night) #Main .cell .item_title .topic-link {
+html.v2p-theme-dark-default #Main .cell .item_title .topic-link {
 font-weight: normal;
 }
 
-html.v2p-theme-dark-default #search-container::before,
-:root body.v2p-theme-dark-default #search-container::before,
-:root .v2p-theme-dark-default #search-container::before,
-:root[data-darkreader-scheme="dark"] body #search-container::before,
-:root body:has(#Wrapper.Night) #search-container::before {
+html.v2p-theme-dark-default #search-container::before {
 background-image: url("/static/img/search_icon_light.png");
 }
 
@@ -2516,10 +2490,7 @@ background-color:var(--v2p-color-main-100);
          border-radius:99px;
 }
 
-html.v2p-theme-dark-default .badge.pro,
-:root body.v2p-theme-dark-default .badge.pro,
-:root[data-darkreader-scheme="dark"] body .badge.pro,
-:root body:has(#Wrapper.Night) .badge.pro {
+html.v2p-theme-dark-default .badge.pro {
 color: #6ee7b7 !important;
          background-color: #064e3b !important;
          border-color: #34d399 !important;
@@ -2592,23 +2563,23 @@ border: none !important;
 }
 
 #pro-campaign-container,
-.box:has(.pro-unit-title),
-.box:has(.pro-unit-img),
-.box:has(.pro-unit-description),
-.box:has(.pro-unit-cta-container),
-.box:has(.pro-unit-from),
+.pro-unit-title,
+.pro-unit-img,
+.pro-unit-description,
+.pro-unit-cta-container,
+.pro-unit-from,
 ins.adsbygoogle,
 script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"] {
 display: none !important;
 }
 
-.box:has(a[href^="/advertise"]) {
+.box.v2p-advertise-box {
 overflow: hidden;
     border: none !important;
     box-shadow: none !important;
 }
 
-.box:has(a[href^="/advertise"]) .sidebar_compliance {
+.box.v2p-advertise-box .sidebar_compliance {
 background-color: var(--v2p-color-bg-block);
 }
 
@@ -2669,6 +2640,7 @@ background-color: var(--v2p-color-bg-block);
   function initializePage() {
     if (pageInitialized) return;
     pageInitialized = true;
+    markPageStructure(document);
     stopBootObserver();
     applyTheme();
     ensureToggle();
@@ -2805,6 +2777,7 @@ background-color: var(--v2p-color-bg-block);
     document.querySelectorAll(NATIVE_TOGGLE_SELECTOR).forEach((link) => {
       const container = link.closest(".fr");
       const target = container || link;
+      target.classList.add("v2p-native-theme-toggle-container");
       target.hidden = true;
       target.setAttribute("aria-hidden", "true");
     });
@@ -2889,6 +2862,7 @@ background-color: var(--v2p-color-bg-block);
       if (!bootObserver) return;
 
       applyThemeClasses(effectiveMode);
+      markPageStructure(document);
       const topTools = document.querySelector("#Top .tools");
       if (topTools) ensureToggle();
       if (document.body && document.getElementById("Wrapper") && topTools) {
@@ -2956,7 +2930,9 @@ background-color: var(--v2p-color-bg-block);
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) removeBuiltInAds(node);
+          if (node.nodeType !== 1) return;
+          markPageStructure(node);
+          removeBuiltInAds(node);
         });
       });
     });
@@ -2976,6 +2952,7 @@ background-color: var(--v2p-color-bg-block);
     };
     const observeBody = () => {
       if (!document.body || stopped) return;
+      markPageStructure(document.body);
       removeBuiltInAds(document.body);
       observeTarget(document.body);
       stopTimer = setTimeout(stop, 8000);
@@ -2991,6 +2968,50 @@ background-color: var(--v2p-color-bg-block);
 
   removeBuiltInAds(document);
   observeBuiltInAds();
+
+  function findStructureMatches(root, selector) {
+    const matches = [];
+    if (root && root.nodeType === 1 && root.matches && root.matches(selector)) matches.push(root);
+    if (root && root.querySelectorAll) matches.push(...root.querySelectorAll(selector));
+    return matches;
+  }
+
+  function markPageStructure(root) {
+    findStructureMatches(root, STRUCTURE_MARKER_SELECTOR).forEach((element) => {
+      if (element.id === "Singleton") {
+        const wrapper = element.closest("#Wrapper");
+        if (wrapper) wrapper.classList.add("v2p-has-singleton");
+        return;
+      }
+
+      if (element.id === "syntax-selector") {
+        const cell = element.closest(".cell");
+        if (cell) cell.classList.add("v2p-syntax-cell");
+        return;
+      }
+
+      if (element.classList.contains("embedded_video_wrapper")) {
+        const payload = element.closest(".payload");
+        if (payload) payload.classList.add("v2p-has-embedded-video");
+        return;
+      }
+
+      if (element.tagName === "FORM") {
+        if (element.getAttribute("action") === "/write") {
+          const box = element.closest(".box");
+          if (box) box.classList.add("v2p-write-box");
+        }
+        const replyCell = element.closest("#reply-box > .cell");
+        if (replyCell) replyCell.classList.add("v2p-reply-form-cell");
+        return;
+      }
+
+      if (element.tagName === "A") {
+        const box = element.closest(".box");
+        if (box) box.classList.add("v2p-advertise-box");
+      }
+    });
+  }
 
   function initNodeNavigation() {
     try {
@@ -3830,7 +3851,16 @@ background-color: var(--v2p-color-bg-block);
     if (cells.length === 0) return;
 
     const commentDataList = cells.map((cell, index) => getCommentData(cell, index));
+    const commentIndexByMemberFloor = new Map();
+    const lastCommentIndexByMember = new Map();
+
     commentDataList.forEach((comment) => {
+      if (comment && comment.memberName && comment.floor) {
+        const key = comment.memberName + "\u0000" + comment.floor;
+        if (!commentIndexByMemberFloor.has(key)) {
+          commentIndexByMemberFloor.set(key, comment.index);
+        }
+      }
       if (comment && comment.refMemberNames && comment.refMemberNames.length === 1) {
         hideSingleMemberRef(comment.contentEl, comment.refMemberNames[0]);
       }
@@ -3838,36 +3868,49 @@ background-color: var(--v2p-color-bg-block);
 
     cells.forEach((cell, index) => {
       const currentComment = commentDataList[index];
-      if (!currentComment || !currentComment.refMemberNames || currentComment.refMemberNames.length === 0) return;
+      if (!currentComment) return;
 
-      const moreThanOneRefMember = currentComment.refMemberNames.length > 1;
-      const refNames = moreThanOneRefMember
-        ? currentComment.refMemberNames.slice().reverse()
-        : currentComment.refMemberNames;
+      const refMemberNames = currentComment.refMemberNames || [];
+      const moreThanOneRefMember = refMemberNames.length > 1;
+      const refNames = moreThanOneRefMember ? refMemberNames.slice().reverse() : refMemberNames;
+      const refFloors = currentComment.refFloors || [];
+      const firstRefFloor = moreThanOneRefMember ? refFloors[refFloors.length - 1] : refFloors[0];
 
       for (const refName of refNames) {
-        for (let targetIndex = index - 1; targetIndex >= 0; targetIndex -= 1) {
-          const targetComment = commentDataList[targetIndex];
-          if (!targetComment || targetComment.memberName !== refName) continue;
+        const targetIndex = lastCommentIndexByMember.get(refName);
+        if (targetIndex === undefined) continue;
 
-          let refCommentIndex = targetIndex;
-          const refFloors = currentComment.refFloors || [];
-          const firstRefFloor = moreThanOneRefMember ? refFloors.slice().reverse()[0] : refFloors[0];
-          if (firstRefFloor && firstRefFloor !== targetComment.floor) {
-            const exactIndex = commentDataList
-              .slice(0, targetIndex)
-              .findIndex((comment) => comment && comment.floor === firstRefFloor && comment.memberName === refName);
-            if (exactIndex >= 0) refCommentIndex = exactIndex;
+        let refCommentIndex = targetIndex;
+        const targetComment = commentDataList[targetIndex];
+        if (firstRefFloor && targetComment && firstRefFloor !== targetComment.floor) {
+          const exactIndex = commentIndexByMemberFloor.get(refName + "\u0000" + firstRefFloor);
+          if (exactIndex !== undefined && exactIndex < targetIndex) {
+            refCommentIndex = exactIndex;
           }
-
-          cell.classList.add("v2p-indent");
-          cells[refCommentIndex].appendChild(cell);
-          return;
         }
+
+        cell.classList.add("v2p-indent");
+        cells[refCommentIndex].appendChild(cell);
+        break;
+      }
+
+      if (currentComment.memberName) {
+        lastCommentIndexByMember.set(currentComment.memberName, index);
       }
     });
 
+    updateReplyStructureClasses(cells);
     nestedReplyApplied = true;
+  }
+
+  function updateReplyStructureClasses(cells) {
+    cells.forEach((cell) => {
+      const hasNestedReply = !!cell.querySelector('.cell[id^="r"]');
+      const nextSibling = cell.nextElementSibling;
+      const hasNextReply = !!(nextSibling && nextSibling.matches('.cell[id^="r"]'));
+      cell.classList.toggle("v2p-reply-leaf", !hasNestedReply);
+      cell.classList.toggle("v2p-reply-last", !hasNextReply);
+    });
   }
 
   function getCommentCells() {

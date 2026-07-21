@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.8.3
+// @version      0.8.4
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -2642,7 +2642,8 @@ background-color: var(--v2p-color-bg-block);
 `;
 
   let bootObserver = null;
-  let applyScheduled = false;
+  let bootSyncScheduled = false;
+  let pageInitialized = false;
   let nestedReplyApplied = false;
   let nativeNight = null;
   let nativeToggleOnceUsed = false;
@@ -2651,12 +2652,24 @@ background-color: var(--v2p-color-bg-block);
   docEl.classList.add("v2p-tabs-pending");
   docEl.classList.add("v2p-topnav-pending");
   setTimeout(() => docEl.classList.remove("v2p-topnav-pending"), 1500);
-  applyThemeClasses(effectiveMode);
   injectStyle(STYLE_ID, THEME_STYLE);
   applyTheme();
   bindEvents();
   startBootObserver();
-  onReady(() => {
+  onReady(initializePage);
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+
+    applyTheme();
+    ensureToggle();
+    initTopNavigationIcons();
+    void syncNativeNight(currentMode);
+  });
+
+  function initializePage() {
+    if (pageInitialized) return;
+    pageInitialized = true;
+    stopBootObserver();
     applyTheme();
     ensureToggle();
     initTopNavigationIcons();
@@ -2665,17 +2678,7 @@ background-color: var(--v2p-color-bg-block);
     initReplyActionIcons();
     initImageUpload();
     initNestedReplies();
-  });
-  window.addEventListener("pageshow", () => {
-    applyTheme();
-    ensureToggle();
-    initTopNavigationIcons();
-    void syncNativeNight(currentMode);
-    initNodeNavigation();
-    initReplyActionIcons();
-    initImageUpload();
-    initNestedReplies();
-  });
+  }
 
   function normalizeMode(mode) {
     return MODES.includes(mode) ? mode : "auto";
@@ -2834,22 +2837,18 @@ background-color: var(--v2p-color-bg-block);
     return nativeNightSyncQueue;
   }
 
-  function clearThemeClasses(el) {
-    if (!el || !el.classList) return;
-    Array.from(el.classList).forEach((className) => {
-      if (className.startsWith("v2p-theme-")) {
-        el.classList.remove(className);
-      }
-    });
-    el.classList.remove("Night");
+  function applyThemeClassState(target, mode) {
+    if (!target || !target.classList) return;
+    const isDark = mode === "dark";
+    target.classList.toggle("v2p-theme-light-default", !isDark);
+    target.classList.toggle("v2p-theme-dark-default", isDark);
+    target.classList.toggle("Night", isDark);
   }
 
   function applyDocumentPrepaint(mode) {
     const isDark = mode === "dark";
-    clearThemeClasses(docEl);
+    applyThemeClassState(docEl, mode);
     docEl.classList.add("v2p-lite-prepaint");
-    docEl.classList.add(isDark ? "v2p-theme-dark-default" : "v2p-theme-light-default");
-    docEl.classList.toggle("Night", isDark);
     docEl.dataset.v2pLiteMode = currentMode;
     docEl.dataset.v2pLiteTheme = mode;
     docEl.style.colorScheme = isDark ? "dark" : "light";
@@ -2858,19 +2857,18 @@ background-color: var(--v2p-color-bg-block);
 
   function applyThemeClasses(mode) {
     const isDark = mode === "dark";
+    const themeChanged = docEl.dataset.v2pLiteTheme !== mode;
     const targets = [docEl, document.body, document.getElementById("Wrapper")];
 
-    targets.forEach((target) => {
-      if (!target || !target.classList) return;
-      clearThemeClasses(target);
-      target.classList.add(isDark ? "v2p-theme-dark-default" : "v2p-theme-light-default");
-      target.classList.toggle("Night", isDark);
-    });
+    targets.forEach((target) => applyThemeClassState(target, mode));
 
-    docEl.dataset.v2pLiteMode = currentMode;
-    docEl.dataset.v2pLiteTheme = mode;
-    docEl.style.colorScheme = isDark ? "dark" : "light";
-    docEl.style.backgroundColor = THEME_META_COLORS[mode];
+    if (docEl.dataset.v2pLiteMode !== currentMode) docEl.dataset.v2pLiteMode = currentMode;
+    if (docEl.dataset.v2pLiteTheme !== mode) docEl.dataset.v2pLiteTheme = mode;
+
+    if (themeChanged || !docEl.style.colorScheme) {
+      docEl.style.colorScheme = isDark ? "dark" : "light";
+      docEl.style.backgroundColor = THEME_META_COLORS[mode];
+    }
   }
 
   function applyTheme() {
@@ -2883,13 +2881,19 @@ background-color: var(--v2p-color-bg-block);
     docEl.classList.add("v2p-loaded");
   }
 
-  function scheduleApply() {
-    if (applyScheduled) return;
-    applyScheduled = true;
+  function scheduleBootSync() {
+    if (bootSyncScheduled) return;
+    bootSyncScheduled = true;
     const run = () => {
-      applyScheduled = false;
-      applyTheme();
-      ensureToggle();
+      bootSyncScheduled = false;
+      if (!bootObserver) return;
+
+      applyThemeClasses(effectiveMode);
+      const topTools = document.querySelector("#Top .tools");
+      if (topTools) ensureToggle();
+      if (document.body && document.getElementById("Wrapper") && topTools) {
+        stopBootObserver();
+      }
     };
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(run);
@@ -2947,8 +2951,7 @@ background-color: var(--v2p-color-bg-block);
   })();
 
   function observeBuiltInAds() {
-    const target = document.body || docEl;
-    if (!target || !window.MutationObserver) return;
+    if (!window.MutationObserver) return;
 
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
@@ -2957,16 +2960,32 @@ background-color: var(--v2p-color-bg-block);
         });
       });
     });
-    observer.observe(target, { childList: true, subtree: true });
 
-    if (!document.body) {
-      document.addEventListener(
-        "DOMContentLoaded",
-        () => {
-          if (document.body) observer.observe(document.body, { childList: true, subtree: true });
-        },
-        { once: true },
-      );
+    let stopped = false;
+    let stopTimer = null;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      observer.disconnect();
+      if (stopTimer !== null) clearTimeout(stopTimer);
+    };
+    const observeTarget = (target) => {
+      if (!target || stopped) return;
+      observer.disconnect();
+      observer.observe(target, { childList: true, subtree: true });
+    };
+    const observeBody = () => {
+      if (!document.body || stopped) return;
+      removeBuiltInAds(document.body);
+      observeTarget(document.body);
+      stopTimer = setTimeout(stop, 8000);
+    };
+
+    if (document.body) {
+      observeBody();
+    } else {
+      observeTarget(docEl);
+      document.addEventListener("DOMContentLoaded", observeBody, { once: true });
     }
   }
 
@@ -2977,11 +2996,13 @@ background-color: var(--v2p-color-bg-block);
     try {
       const tabsContainer = document.querySelector("#Tabs");
       if (!tabsContainer) return false;
+      if (tabsContainer.dataset.v2pLiteNavReady === "1") return false;
 
       const currentData = captureCurrentNavItems(tabsContainer);
       const config = readNavConfig(currentData);
       saveNavConfig(config);
       renderTabs(tabsContainer, config);
+      tabsContainer.dataset.v2pLiteNavReady = "1";
       return true;
     } catch (error) {
       console.error("V2EX Polish Lite navigation failed:", error);
@@ -3043,7 +3064,10 @@ background-color: var(--v2p-color-bg-block);
 
   function saveNavConfig(config) {
     try {
-      localStorage.setItem(NAV_STORAGE_KEY, JSON.stringify(config));
+      const value = JSON.stringify(config);
+      if (localStorage.getItem(NAV_STORAGE_KEY) !== value) {
+        localStorage.setItem(NAV_STORAGE_KEY, value);
+      }
     } catch (error) {
       // Navigation customization still works for this page when storage is unavailable.
     }
@@ -3051,6 +3075,7 @@ background-color: var(--v2p-color-bg-block);
 
   function renderTabs(container, config) {
     const activeHref = getActiveTabHref(container);
+    const nextChildren = [];
     const extras = Array.from(container.childNodes).filter((node) => {
       if (node.nodeType !== 1) return false;
       if (node.classList.contains("tab") || node.classList.contains("tab_current")) return false;
@@ -3063,13 +3088,14 @@ background-color: var(--v2p-color-bg-block);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     if (urlTab) {
       try {
-        localStorage.setItem(LAST_TAB_STORAGE_KEY, urlTab);
+        if (localStorage.getItem(LAST_TAB_STORAGE_KEY) !== urlTab) {
+          localStorage.setItem(LAST_TAB_STORAGE_KEY, urlTab);
+        }
       } catch (error) {
         // Ignore storage failures.
       }
     }
 
-    container.innerHTML = "";
     config.forEach((item) => {
       if (!item.visible) return;
 
@@ -3085,11 +3111,11 @@ background-color: var(--v2p-color-bg-block);
         link.innerHTML = buildTabIcon(item.name) + escapeHtml(item.name);
       }
 
-      container.appendChild(link);
+      nextChildren.push(link);
     });
 
-    extras.forEach((node) => container.appendChild(node));
-    container.appendChild(createNavSettingsButton(config));
+    nextChildren.push(...extras, createNavSettingsButton(config));
+    container.replaceChildren(...nextChildren);
   }
 
   function getActiveTabHref(container) {
@@ -3397,6 +3423,7 @@ background-color: var(--v2p-color-bg-block);
         ? Array.from(contentCell.children).find((child) => child.classList && child.classList.contains("fr"))
         : null;
       if (!actions) return;
+      if (actions.dataset.v2pLiteReplyActionsReady === "1") return;
 
       let rowChanged = false;
       let controls = Array.from(actions.children).find(
@@ -3458,7 +3485,10 @@ background-color: var(--v2p-color-bg-block);
             (link.getAttribute("onclick") || "").includes("replyOne"),
           );
       rowChanged = setIcon(replyLink, "reply", "回复") || rowChanged;
-      if (replyLink) controls.appendChild(replyLink);
+      if (replyLink && replyLink.parentNode !== controls) {
+        controls.appendChild(replyLink);
+        rowChanged = true;
+      }
 
       if (rowChanged) {
         const floorNumber = Array.from(actions.children).find(
@@ -3468,6 +3498,7 @@ background-color: var(--v2p-color-bg-block);
         if (floorNumber) actions.appendChild(floorNumber);
         actions.classList.add("v2p-lite-reply-actions");
       }
+      actions.dataset.v2pLiteReplyActionsReady = "1";
       changed = rowChanged || changed;
     });
 
@@ -3923,7 +3954,7 @@ background-color: var(--v2p-color-bg-block);
       meta.name = "theme-color";
       (document.head || docEl).appendChild(meta);
     }
-    meta.content = THEME_META_COLORS[mode];
+    if (meta.content !== THEME_META_COLORS[mode]) meta.content = THEME_META_COLORS[mode];
   }
 
   function ensureToggle() {
@@ -3940,7 +3971,7 @@ background-color: var(--v2p-color-bg-block);
     }
 
     if (topTools) {
-      toggle.className = "top";
+      if (toggle.className !== "top") toggle.className = "top";
       if (toggle.parentNode !== topTools) topTools.appendChild(toggle);
     } else if (document.body && !toggle.parentNode) {
       toggle.className = "v2p-lite-floating";
@@ -3957,12 +3988,19 @@ background-color: var(--v2p-color-bg-block);
 
     const label = LABELS[currentMode] || LABELS.auto;
     const effectiveLabel = LABELS[effectiveMode] || LABELS.light;
-    toggle.innerHTML = ICONS[currentMode] || ICONS.auto;
-    toggle.title = currentMode === "auto" ? "自动：当前" + effectiveLabel : "当前" + label;
-    toggle.setAttribute("aria-label", "主题：" + toggle.title);
-    toggle.setAttribute("aria-pressed", effectiveMode === "dark" ? "true" : "false");
-    toggle.dataset.mode = currentMode;
-    toggle.dataset.effectiveMode = effectiveMode;
+    const title = currentMode === "auto" ? "自动：当前" + effectiveLabel : "当前" + label;
+    const pressed = effectiveMode === "dark" ? "true" : "false";
+
+    if (toggle.dataset.mode !== currentMode || !toggle.querySelector("svg")) {
+      toggle.innerHTML = ICONS[currentMode] || ICONS.auto;
+    }
+    if (toggle.title !== title) toggle.title = title;
+    if (toggle.getAttribute("aria-label") !== "主题：" + title) {
+      toggle.setAttribute("aria-label", "主题：" + title);
+    }
+    if (toggle.getAttribute("aria-pressed") !== pressed) toggle.setAttribute("aria-pressed", pressed);
+    if (toggle.dataset.mode !== currentMode) toggle.dataset.mode = currentMode;
+    if (toggle.dataset.effectiveMode !== effectiveMode) toggle.dataset.effectiveMode = effectiveMode;
   }
 
   function cycleMode() {
@@ -4019,18 +4057,14 @@ background-color: var(--v2p-color-bg-block);
   function startBootObserver() {
     if (!window.MutationObserver || bootObserver) return;
 
-    bootObserver = new MutationObserver(() => {
-      scheduleApply();
-      if (document.body && document.getElementById("Wrapper") && document.querySelector("#Top .tools")) {
-        stopBootObserver();
-      }
-    });
+    bootObserver = new MutationObserver(scheduleBootSync);
 
     bootObserver.observe(docEl, {
       childList: true,
       subtree: true,
     });
 
+    scheduleBootSync();
     setTimeout(stopBootObserver, 3000);
   }
 

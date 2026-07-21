@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.8.2
+// @version      0.8.3
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -1641,6 +1641,18 @@ height: 26px;
 color: var(--v2p-color-foreground);
 }
 
+#Top .tools > a.top.v2p-lite-topnav-icon {
+display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+#Top .tools > a.top.v2p-lite-topnav-icon svg {
+flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+}
+
 #Top .tools * {
 margin-left: 0;
 }
@@ -2637,6 +2649,8 @@ background-color: var(--v2p-color-bg-block);
   let nativeNightSyncQueue = Promise.resolve();
 
   docEl.classList.add("v2p-tabs-pending");
+  docEl.classList.add("v2p-topnav-pending");
+  setTimeout(() => docEl.classList.remove("v2p-topnav-pending"), 1500);
   applyThemeClasses(effectiveMode);
   injectStyle(STYLE_ID, THEME_STYLE);
   applyTheme();
@@ -2645,6 +2659,7 @@ background-color: var(--v2p-color-bg-block);
   onReady(() => {
     applyTheme();
     ensureToggle();
+    initTopNavigationIcons();
     void syncNativeNight(currentMode);
     initNodeNavigation();
     initReplyActionIcons();
@@ -2654,6 +2669,7 @@ background-color: var(--v2p-color-bg-block);
   window.addEventListener("pageshow", () => {
     applyTheme();
     ensureToggle();
+    initTopNavigationIcons();
     void syncNativeNight(currentMode);
     initNodeNavigation();
     initReplyActionIcons();
@@ -3314,6 +3330,44 @@ background-color: var(--v2p-color-bg-block);
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function initTopNavigationIcons() {
+    const iconPaths = {
+      home: '<path d="M15 21v-8a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+      user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+      notes: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/>',
+      planet: '<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" x2="22" y1="12" y2="12"/>',
+      settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+      logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+    };
+
+    const links = Array.from(document.querySelectorAll("#Top .tools > a.top"));
+    let changed = false;
+
+    links.forEach((link) => {
+      if (link.id === TOGGLE_ID || link.dataset.v2pLiteTopnavIcon || link.querySelector("svg")) return;
+
+      const text = (link.textContent || "").trim();
+      const href = link.getAttribute("href") || "";
+      let iconName = "";
+
+      if (text === "首页" || href === "/") iconName = "home";
+      else if (href.startsWith("/member/")) iconName = "user";
+      else if (text === "记事本" || href === "/notes") iconName = "notes";
+      else if (text === "Planet" || href === "/planet") iconName = "planet";
+      else if (text === "设置" || href === "/settings") iconName = "settings";
+      else if (text === "登出" || href.includes("signout")) iconName = "logout";
+
+      if (!iconName) return;
+      link.dataset.v2pLiteTopnavIcon = iconName;
+      link.classList.add("v2p-lite-topnav-icon");
+      link.insertAdjacentHTML("afterbegin", buildSvgIcon(iconPaths[iconName]));
+      changed = true;
+    });
+
+    docEl.classList.remove("v2p-topnav-pending");
+    return changed;
   }
 
   function initReplyActionIcons() {

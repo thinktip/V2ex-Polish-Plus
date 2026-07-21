@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.8.1
+// @version      0.8.2
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -2159,10 +2159,9 @@ position: relative;
 font-size: 12px;
 }
 
-#Main .v2p-lite-reply-actions .thank_area {
+#Main .v2p-lite-reply-controls {
 display: inline-flex;
     align-items: center;
-    gap: 6px;
 }
 
 #Main .v2p-lite-reply-action {
@@ -3346,34 +3345,56 @@ background-color: var(--v2p-color-bg-block);
       if (!actions) return;
 
       let rowChanged = false;
+      let controls = Array.from(actions.children).find(
+        (child) => child.classList && child.classList.contains("v2p-lite-reply-controls"),
+      );
+      if (!controls) {
+        controls = document.createElement("span");
+        controls.className = "v2p-lite-reply-controls";
+        rowChanged = true;
+      }
+
       const thankArea = Array.from(actions.children).find(
         (child) => child.classList && child.classList.contains("thank_area"),
       );
 
       if (thankArea) {
-        const thankLinks = Array.from(thankArea.querySelectorAll("a"));
-        const hideLink = thankLinks.find((link) => {
-          const onclick = link.getAttribute("onclick") || "";
-          return onclick.includes("hideReply") || (link.textContent || "").trim().includes("隐藏");
+        const directElements = Array.from(thankArea.children);
+        const nativeThankControls = directElements.filter(
+          (child) => child.classList && child.classList.contains("thank"),
+        );
+        const actionLinks = directElements.filter((child) => child.matches("a, button"));
+        const hideControl = nativeThankControls[0] || actionLinks.find((control) => {
+          const onclick = control.getAttribute("onclick") || "";
+          return onclick.includes("hideReply") || (control.textContent || "").trim().includes("隐藏");
         });
-        const thankLink = thankLinks.find((link) => {
-          const onclick = link.getAttribute("onclick") || "";
-          return onclick.includes("thankReply") || !!link.querySelector('img[src*="heart_neue.png"]');
+        const thankControl = nativeThankControls[1] || actionLinks.find((control) => {
+          const onclick = control.getAttribute("onclick") || "";
+          return onclick.includes("thankReply") || !!control.querySelector('img[src*="heart_neue.png"]');
         });
 
-        rowChanged = setIcon(hideLink, "hide", "隐藏回复") || rowChanged;
-        rowChanged = setIcon(thankLink, "thank", "感谢回复") || rowChanged;
+        if (hideControl) {
+          hideControl.classList.remove("thank");
+          rowChanged = setIcon(hideControl, "hide", "隐藏回复") || rowChanged;
+          controls.appendChild(hideControl);
+        }
+        if (thankControl) {
+          thankControl.classList.remove("thank");
+          rowChanged = setIcon(thankControl, "thank", "感谢回复") || rowChanged;
+          controls.appendChild(thankControl);
+        }
 
         const existingThankedIcon = thankArea.querySelector(
           ".v2p-lite-reply-action-thank.v2p-thanked",
         );
-        if (thankArea.classList.contains("thanked") && !thankLink && !existingThankedIcon) {
+        if (thankArea.classList.contains("thanked") && !thankControl && !existingThankedIcon) {
           const thankedIcon = document.createElement("span");
           thankedIcon.className = "v2p-thanked";
-          thankArea.textContent = "";
-          thankArea.appendChild(thankedIcon);
           rowChanged = setIcon(thankedIcon, "thank", "已感谢") || rowChanged;
+          controls.appendChild(thankedIcon);
         }
+
+        thankArea.remove();
       }
 
       const replyImage = actions.querySelector('img[src*="reply_neue.png"]');
@@ -3383,8 +3404,16 @@ background-color: var(--v2p-color-bg-block);
             (link.getAttribute("onclick") || "").includes("replyOne"),
           );
       rowChanged = setIcon(replyLink, "reply", "回复") || rowChanged;
+      if (replyLink) controls.appendChild(replyLink);
 
-      if (rowChanged) actions.classList.add("v2p-lite-reply-actions");
+      if (rowChanged) {
+        const floorNumber = Array.from(actions.children).find(
+          (child) => child.classList && child.classList.contains("no"),
+        );
+        actions.replaceChildren(controls);
+        if (floorNumber) actions.appendChild(floorNumber);
+        actions.classList.add("v2p-lite-reply-actions");
+      }
       changed = rowChanged || changed;
     });
 

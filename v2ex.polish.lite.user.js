@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.7.1
+// @version      0.7.2
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -3062,6 +3062,7 @@ background-color: var(--v2p-color-bg-block);
     menu.appendChild(list);
 
     let dragSrcIndex = null;
+    let dragDestinationIndex = null;
 
     const saveAndRefresh = () => {
       saveNavConfig(config);
@@ -3075,11 +3076,11 @@ background-color: var(--v2p-color-bg-block);
       [config[fromIndex], config[toIndex]] = [config[toIndex], config[fromIndex]];
     };
 
-    const reorderConfig = (fromIndex, toIndex) => {
-      if (fromIndex == null || toIndex == null || fromIndex === toIndex) return;
+    const reorderConfig = (fromIndex, destinationIndex) => {
+      if (fromIndex == null || destinationIndex == null || fromIndex === destinationIndex) return;
       const next = config.slice();
       const moved = next.splice(fromIndex, 1)[0];
-      const insertIndex = Math.max(0, Math.min(next.length, toIndex > fromIndex ? toIndex - 1 : toIndex));
+      const insertIndex = Math.max(0, Math.min(next.length, destinationIndex));
       next.splice(insertIndex, 0, moved);
       config.splice(0, config.length, ...next);
     };
@@ -3088,6 +3089,22 @@ background-color: var(--v2p-color-bg-block);
       list.querySelectorAll(".v2p-nav-drop-before, .v2p-nav-drop-after").forEach((row) => {
         row.classList.remove("v2p-nav-drop-before", "v2p-nav-drop-after");
       });
+      dragDestinationIndex = null;
+    };
+
+    const showDropPosition = (destinationIndex) => {
+      clearDropStyles();
+      if (dragSrcIndex == null || destinationIndex === dragSrcIndex) return;
+
+      const rows = Array.from(list.querySelectorAll(".v2p-nav-menu-row"));
+      const remainingRows = rows.filter((_, index) => index !== dragSrcIndex);
+      const nextRow = remainingRows[destinationIndex];
+      if (nextRow) {
+        nextRow.classList.add("v2p-nav-drop-before");
+      } else if (remainingRows.length > 0) {
+        remainingRows[remainingRows.length - 1].classList.add("v2p-nav-drop-after");
+      }
+      dragDestinationIndex = destinationIndex;
     };
 
     const renderList = () => {
@@ -3172,24 +3189,22 @@ background-color: var(--v2p-color-bg-block);
           if (dragSrcIndex == null) return;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-          clearDropStyles();
-          if (dragSrcIndex === index) return;
           const rowRect = row.getBoundingClientRect();
           const dropAfter = event.clientY >= rowRect.top + rowRect.height / 2;
-          row.classList.add(dropAfter ? "v2p-nav-drop-after" : "v2p-nav-drop-before");
+          const sourceSlot = index + (dropAfter ? 1 : 0);
+          const destinationIndex = sourceSlot > dragSrcIndex ? sourceSlot - 1 : sourceSlot;
+          showDropPosition(destinationIndex);
         });
 
         row.addEventListener("drop", (event) => {
           if (dragSrcIndex == null) return;
           event.preventDefault();
           event.stopPropagation();
-          if (dragSrcIndex === index) {
+          if (dragDestinationIndex == null || dragDestinationIndex === dragSrcIndex) {
             clearDropStyles();
             return;
           }
-          const rowRect = row.getBoundingClientRect();
-          const dropAfter = event.clientY >= rowRect.top + rowRect.height / 2;
-          reorderConfig(dragSrcIndex, index + (dropAfter ? 1 : 0));
+          reorderConfig(dragSrcIndex, dragDestinationIndex);
           dragSrcIndex = null;
           clearDropStyles();
           renderList();

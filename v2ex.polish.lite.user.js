@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.6.0
+// @version      0.7.1
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
@@ -503,6 +503,126 @@ background-color: var(--v2p-color-bg-hover-btn);
 .v2p-reply-upload-bar-disabled {
 pointer-events: none;
 opacity: 0.65;
+}
+
+.v2p-image-upload-previews:empty {
+display: none;
+}
+
+.v2p-image-upload-previews {
+background-color: var(--v2p-color-bg-input);
+border-top: 1px solid var(--v2p-color-border);
+}
+
+.v2p-image-upload-preview {
+display: grid;
+grid-template-columns: 64px minmax(0, 1fr) auto;
+gap: 10px;
+align-items: center;
+min-height: 64px;
+padding: 10px;
+}
+
+.v2p-image-upload-preview + .v2p-image-upload-preview {
+border-top: 1px solid var(--v2p-color-border);
+}
+
+.v2p-image-upload-thumb {
+overflow: hidden;
+width: 64px;
+height: 64px;
+background-color: var(--v2p-color-bg-content);
+border: 1px solid var(--v2p-color-border);
+border-radius: 4px;
+}
+
+.v2p-image-upload-thumb img {
+display: block;
+width: 100%;
+height: 100%;
+object-fit: cover;
+}
+
+.v2p-image-upload-info {
+min-width: 0;
+}
+
+.v2p-image-upload-name {
+overflow: hidden;
+font-size: 13px;
+font-weight: 600;
+color: var(--v2p-color-foreground);
+text-overflow: ellipsis;
+white-space: nowrap;
+}
+
+.v2p-image-upload-meta,
+.v2p-image-upload-status {
+margin-top: 3px;
+font-size: 12px;
+color: var(--v2p-color-font-tertiary);
+}
+
+.v2p-image-upload-status {
+color: var(--v2p-color-accent-600);
+}
+
+.v2p-image-upload-preview-error .v2p-image-upload-status {
+color: var(--v2p-color-error);
+}
+
+.v2p-image-upload-actions {
+display: inline-flex;
+gap: 4px;
+align-items: center;
+}
+
+.v2p-image-upload-action {
+cursor: pointer;
+display: inline-flex;
+align-items: center;
+justify-content: center;
+width: 30px;
+height: 30px;
+padding: 0;
+color: var(--v2p-color-font-tertiary);
+background: transparent;
+border: 0;
+border-radius: 4px;
+}
+
+.v2p-image-upload-action:hover {
+color: var(--v2p-color-foreground);
+text-decoration: none;
+background-color: var(--v2p-color-bg-hover-btn);
+}
+
+.v2p-image-upload-remove:hover {
+color: var(--v2p-color-error);
+}
+
+.v2p-image-upload-action svg {
+width: 15px;
+height: 15px;
+fill: none;
+stroke: currentColor;
+stroke-width: 2;
+stroke-linecap: round;
+stroke-linejoin: round;
+}
+
+@media (max-width: 520px) {
+.v2p-image-upload-preview {
+grid-template-columns: 54px minmax(0, 1fr) auto;
+gap: 8px;
+min-height: 54px;
+padding: 8px;
+}
+
+.v2p-image-upload-thumb {
+width: 54px;
+height: 54px;
+}
 }
 
 body form textarea#topic_title {
@@ -1903,10 +2023,12 @@ backdrop-filter: blur(12px) saturate(180%);
 
 .v2p-nav-menu-list {
 max-height: 300px;
+padding: 4px 0;
 overflow-y: auto;
 }
 
 .v2p-nav-menu-row {
+position: relative;
 display: flex;
 align-items: center;
 justify-content: space-between;
@@ -1967,15 +2089,60 @@ opacity: 0.55;
 }
 
 .v2p-nav-dragging {
-opacity: 0.45;
+opacity: 0.35;
+background-color: var(--v2p-color-bg-hover-btn);
+outline: 1px dashed var(--v2p-color-accent-500);
+outline-offset: -1px;
 }
 
-.v2p-nav-drop-before {
-box-shadow: 0 -2px 0 0 var(--v2p-color-accent-500) inset;
-}
-
+.v2p-nav-drop-before,
 .v2p-nav-drop-after {
-box-shadow: 0 2px 0 0 var(--v2p-color-accent-500) inset;
+background-color: var(--v2p-color-bg-hover-btn);
+}
+
+.v2p-nav-drop-before::before,
+.v2p-nav-drop-after::before {
+content: "";
+position: absolute;
+z-index: 3;
+left: 4px;
+right: 4px;
+height: 3px;
+border-radius: 2px;
+background-color: var(--v2p-color-accent-500);
+box-shadow: 0 0 0 1px var(--v2p-color-bg-content), 0 1px 4px rgba(0, 0, 0, 0.2);
+pointer-events: none;
+}
+
+.v2p-nav-drop-before::after,
+.v2p-nav-drop-after::after {
+content: "";
+position: absolute;
+z-index: 4;
+left: 1px;
+width: 7px;
+height: 7px;
+box-sizing: border-box;
+border: 2px solid var(--v2p-color-bg-content);
+border-radius: 50%;
+background-color: var(--v2p-color-accent-500);
+pointer-events: none;
+}
+
+.v2p-nav-drop-before::before {
+top: -3px;
+}
+
+.v2p-nav-drop-before::after {
+top: -5px;
+}
+
+.v2p-nav-drop-after::before {
+bottom: -3px;
+}
+
+.v2p-nav-drop-after::after {
+bottom: -5px;
 }
 
 #Main #SecondaryTabs {
@@ -2962,6 +3129,13 @@ background-color: var(--v2p-color-bg-block);
         );
         dragHandle.addEventListener("mousedown", () => {
           row.draggable = true;
+          document.addEventListener(
+            "mouseup",
+            () => {
+              if (dragSrcIndex !== index) row.draggable = false;
+            },
+            { once: true },
+          );
         });
 
         const checkbox = document.createElement("input");
@@ -2987,25 +3161,32 @@ background-color: var(--v2p-color-bg-block);
         row.addEventListener("dragstart", (event) => {
           dragSrcIndex = index;
           row.classList.add("v2p-nav-dragging");
+          row.setAttribute("aria-grabbed", "true");
           if (event.dataTransfer) {
             event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", "");
+            event.dataTransfer.setData("text/plain", item.name);
           }
         });
 
         row.addEventListener("dragover", (event) => {
-          if (dragSrcIndex == null || dragSrcIndex === index) return;
+          if (dragSrcIndex == null) return;
           event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+          clearDropStyles();
+          if (dragSrcIndex === index) return;
           const rowRect = row.getBoundingClientRect();
           const dropAfter = event.clientY >= rowRect.top + rowRect.height / 2;
-          clearDropStyles();
           row.classList.add(dropAfter ? "v2p-nav-drop-after" : "v2p-nav-drop-before");
         });
 
         row.addEventListener("drop", (event) => {
-          if (dragSrcIndex == null || dragSrcIndex === index) return;
+          if (dragSrcIndex == null) return;
           event.preventDefault();
           event.stopPropagation();
+          if (dragSrcIndex === index) {
+            clearDropStyles();
+            return;
+          }
           const rowRect = row.getBoundingClientRect();
           const dropAfter = event.clientY >= rowRect.top + rowRect.height / 2;
           reorderConfig(dragSrcIndex, index + (dropAfter ? 1 : 0));
@@ -3018,6 +3199,7 @@ background-color: var(--v2p-color-bg-block);
         row.addEventListener("dragend", () => {
           row.draggable = false;
           row.classList.remove("v2p-nav-dragging");
+          row.removeAttribute("aria-grabbed");
           dragSrcIndex = null;
           clearDropStyles();
         });
@@ -3153,6 +3335,7 @@ background-color: var(--v2p-color-bg-block);
       pasteTarget: textarea,
       insertText: (text) => insertTextToTextarea(textarea, text),
       replaceText: (find, replace) => replaceTextInTextarea(textarea, find, replace),
+      removeText: (imgLink) => replaceTextInTextarea(textarea, imgLink, ""),
     });
     textarea.dataset.v2pLiteImageUploadBound = "1";
     return true;
@@ -3168,11 +3351,15 @@ background-color: var(--v2p-color-bg-block);
       pasteTarget: wrapper,
       insertText: (text) => insertTextToEditor(editor, text),
       replaceText: (find, replace) => replaceTextInEditor(editor, find, replace),
+      removeText: (imgLink) => {
+        replaceTextInEditor(editor, "![](" + imgLink + ")", "");
+        replaceTextInEditor(editor, imgLink, "");
+      },
     });
     return true;
   }
 
-  function bindImageUploadToWrapper({ wrapper, pasteTarget, insertText, replaceText }) {
+  function bindImageUploadToWrapper({ wrapper, pasteTarget, insertText, replaceText, removeText }) {
     if (!wrapper || wrapper.dataset.v2pLiteImageUploadBound === "1") return;
 
     wrapper.dataset.v2pLiteImageUploadBound = "1";
@@ -3187,6 +3374,16 @@ background-color: var(--v2p-color-bg-block);
       wrapper.appendChild(uploadBar);
     }
     uploadBar.textContent = UPLOAD_TIP;
+
+    let previewList = Array.from(wrapper.children).find((child) =>
+      child.classList && child.classList.contains("v2p-image-upload-previews"),
+    );
+    if (!previewList) {
+      previewList = document.createElement("div");
+      previewList.className = "v2p-image-upload-previews";
+      previewList.setAttribute("aria-live", "polite");
+      uploadBar.insertAdjacentElement("afterend", previewList);
+    }
 
     const setUploading = (value) => {
       uploading = value;
@@ -3203,6 +3400,7 @@ background-color: var(--v2p-color-bg-block);
       try {
         const imgLink = await uploadImage(file);
         replaceText(placeholder, imgLink);
+        addImageUploadPreview(previewList, file, imgLink, removeText);
       } catch (error) {
         console.error("V2EX Polish Lite image upload failed:", error);
         replaceText(placeholder, "");
@@ -3249,6 +3447,87 @@ background-color: var(--v2p-color-bg-block);
       event.preventDefault();
       void handleUpload(file);
     });
+  }
+
+  function addImageUploadPreview(previewList, file, imgLink, removeText) {
+    const item = document.createElement("div");
+    item.className = "v2p-image-upload-preview";
+
+    const thumbLink = document.createElement("a");
+    thumbLink.className = "v2p-image-upload-thumb";
+    thumbLink.href = imgLink;
+    thumbLink.target = "_blank";
+    thumbLink.rel = "noopener noreferrer";
+    thumbLink.title = "查看原图";
+
+    const image = document.createElement("img");
+    image.alt = file.name || "已上传图片";
+    image.decoding = "async";
+
+    const info = document.createElement("div");
+    info.className = "v2p-image-upload-info";
+
+    const name = document.createElement("div");
+    name.className = "v2p-image-upload-name";
+    name.textContent = file.name || "粘贴的图片";
+    name.title = name.textContent;
+
+    const meta = document.createElement("div");
+    meta.className = "v2p-image-upload-meta";
+    meta.textContent = formatImageFileSize(file.size);
+
+    const status = document.createElement("div");
+    status.className = "v2p-image-upload-status";
+    status.textContent = "已上传到 Imgur";
+
+    image.addEventListener("load", () => {
+      const dimensions = image.naturalWidth && image.naturalHeight
+        ? image.naturalWidth + " x " + image.naturalHeight
+        : "";
+      meta.textContent = [dimensions, formatImageFileSize(file.size)].filter(Boolean).join(" · ");
+    });
+    image.addEventListener("error", () => {
+      item.classList.add("v2p-image-upload-preview-error");
+      status.textContent = "预览加载失败，请打开原图确认";
+    });
+    image.src = imgLink;
+    thumbLink.appendChild(image);
+
+    info.append(name, meta, status);
+
+    const actions = document.createElement("div");
+    actions.className = "v2p-image-upload-actions";
+
+    const openLink = document.createElement("a");
+    openLink.className = "v2p-image-upload-action";
+    openLink.href = imgLink;
+    openLink.target = "_blank";
+    openLink.rel = "noopener noreferrer";
+    openLink.title = "查看原图";
+    openLink.setAttribute("aria-label", "查看原图");
+    openLink.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M10 14 21 3"></path><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"></path></svg>';
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "v2p-image-upload-action v2p-image-upload-remove";
+    removeButton.title = "从正文移除";
+    removeButton.setAttribute("aria-label", "从正文移除");
+    removeButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 15H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>';
+    removeButton.addEventListener("click", () => {
+      removeText(imgLink);
+      item.remove();
+    });
+
+    actions.append(openLink, removeButton);
+    item.append(thumbLink, info, actions);
+    previewList.appendChild(item);
+  }
+
+  function formatImageFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 
   async function uploadImage(file) {

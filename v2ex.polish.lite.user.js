@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         V2EX Polish Lite
 // @namespace    https://v2ex.com/
-// @version      0.7.2
+// @version      0.7.4
 // @description  Minimal one-file V2EX light/dark theme switcher.
 // @match        https://v2ex.com/*
 // @match        https://*.v2ex.com/*
 // @run-at       document-start
 // @icon         https://v2ex.com/static/apple-touch-icon-180.png
+// @downloadURL  https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.lite.user.js
+// @updateURL    https://raw.githubusercontent.com/thinktip/V2ex-Polish-Plus/main/v2ex.polish.lite.user.js
 // @grant        none
 // ==/UserScript==
 
@@ -2057,30 +2059,6 @@ text-overflow: ellipsis;
 white-space: nowrap;
 }
 
-.v2p-nav-move-group {
-display: inline-flex;
-flex-direction: column;
-gap: 0;
-}
-
-.v2p-nav-menu-btn {
-display: inline-flex;
-align-items: center;
-justify-content: center;
-padding: 1px 3px;
-border: none;
-color: inherit;
-background: none;
-line-height: 0;
-cursor: pointer;
-opacity: 0.45;
-}
-
-.v2p-nav-menu-btn:disabled {
-cursor: default;
-opacity: 0.12;
-}
-
 .v2p-nav-drag-handle {
 display: inline-flex;
 align-items: center;
@@ -3070,12 +3048,6 @@ background-color: var(--v2p-color-bg-block);
       if (tabsContainer) renderTabs(tabsContainer, config);
     };
 
-    const moveItem = (fromIndex, direction) => {
-      const toIndex = fromIndex + direction;
-      if (toIndex < 0 || toIndex >= config.length) return;
-      [config[fromIndex], config[toIndex]] = [config[toIndex], config[fromIndex]];
-    };
-
     const reorderConfig = (fromIndex, destinationIndex) => {
       if (fromIndex == null || destinationIndex == null || fromIndex === destinationIndex) return;
       const next = config.slice();
@@ -3116,28 +3088,6 @@ background-color: var(--v2p-color-bg-block);
         const left = document.createElement("div");
         left.className = "v2p-nav-menu-left";
 
-        const moveGroup = document.createElement("span");
-        moveGroup.className = "v2p-nav-move-group";
-
-        const up = createMenuMoveButton("up", index === 0);
-        up.addEventListener("click", (event) => {
-          event.stopPropagation();
-          moveItem(index, -1);
-          renderList();
-          saveAndRefresh();
-        });
-
-        const down = createMenuMoveButton("down", index === config.length - 1);
-        down.addEventListener("click", (event) => {
-          event.stopPropagation();
-          moveItem(index, 1);
-          renderList();
-          saveAndRefresh();
-        });
-
-        moveGroup.appendChild(up);
-        moveGroup.appendChild(down);
-
         const dragHandle = document.createElement("span");
         dragHandle.className = "v2p-nav-drag-handle";
         dragHandle.title = "拖拽排序";
@@ -3168,7 +3118,6 @@ background-color: var(--v2p-color-bg-block);
         name.className = "v2p-nav-menu-name";
         name.textContent = item.name;
 
-        left.appendChild(moveGroup);
         left.appendChild(dragHandle);
         left.appendChild(checkbox);
         left.appendChild(name);
@@ -3234,15 +3183,6 @@ background-color: var(--v2p-color-bg-block);
     }, 0);
 
     document.body.appendChild(menu);
-  }
-
-  function createMenuMoveButton(direction, disabled) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "v2p-nav-menu-btn";
-    button.disabled = disabled;
-    button.innerHTML = buildSvgIcon(direction === "up" ? '<path d="m18 15-6-6-6 6"/>' : '<path d="m6 9 6 6 6-6"/>');
-    return button;
   }
 
   function escapeHtml(value) {
